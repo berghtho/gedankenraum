@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gedankenraum</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="gedankenraum" class="idea-board">
+    <header class="ib-topbar">
+      <div class="ib-brand"><span class="ib-brand-mark">G</span><span>GEDANKENRAUM</span></div>
+      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Gedanken durchsuchen"></label>
+      <span class="ib-count" data-idea-count>0 VON 0</span>
+      <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
+      <button class="ib-stop" data-stop type="button">BEENDEN</button>
+    </header>
+    <div class="ib-capture-bar" data-idea-drop>
+      <span class="ib-capture-lede">
+        <span class="ib-capture-type" data-idea-type>NOTIZ ODER LINK</span>
+        <span class="ib-capture-title">Wohin mit dem guten Zeug?</span>
+      </span>
+      <label class="ib-capture-field">
+        <textarea data-idea-input maxlength="12000" rows="1" placeholder="Hier ablegen, einfügen oder lostippen …"></textarea>
+      </label>
+      <span class="ib-capture-hint">Drag &amp; Drop · Strg + Enter</span>
+      <button data-idea-capture type="button" disabled>EINSORTIEREN <span>→</span></button>
+    </div>
+    <div class="ib-message" data-idea-message hidden></div>
+    <div class="ib-grid">
+      <div class="ib-list" data-idea-map></div>
+      <aside class="ib-detail" data-idea-detail><div class="ib-no-selection"><p>Gedankenraum wird geladen.</p></div></aside>
+    </div>
+  </main>
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>
