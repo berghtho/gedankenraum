@@ -3,6 +3,8 @@
 Ein lokaler Ort für Links und kurze Notizen. Gedankenraum liest Links, lässt sie durch Codex
 verdichten, ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
 
+<img width="1210" height="709" alt="gedankenraum" src="https://github.com/user-attachments/assets/abe6b602-abd3-4559-b20e-fad154527cee" />
+
 ## Starten und beenden
 
 Unter Windows genügt ein Doppelklick auf `Gedankenraum.cmd`. Die Anwendung startet und öffnet sich
@@ -30,7 +32,7 @@ sein. Ist Codex nicht verfügbar, wird sichtbar auf die einfache lokale Analyse 
 
 ### Bestehende OpBoard-Gedanken übernehmen
 
-Gedankenraum verwendet dasselbe Dateiformat wie das frühere IdeaBoard. Gedankenraum zuerst über
+Gedankenraum verwendet dasselbe Dateiformat wie das frühere IdeaBoard bzw. OpBoard. Gedankenraum zuerst über
 `BEENDEN` schließen und dann die bisherige `ideas.json` nach
 `%LOCALAPPDATA%\Gedankenraum\ideas.json` kopieren. Beim nächsten Start ist die Sammlung vorhanden.
 
