@@ -1,4 +1,4 @@
-# Gedankenraum
+# Gedankenraum - Wohin mit dem guten Zeug?
 
 Ein lokaler Ort für Links und kurze Notizen. Gedankenraum liest Links, lässt sie durch Codex
 verdichten, ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
