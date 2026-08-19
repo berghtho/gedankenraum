@@ -8,9 +8,9 @@ import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync
 import { spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
+import { createCodexAnalyzer } from './codex-analysis.mjs';
 import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
-import { createLocalAnalyzer } from './local-analysis.mjs';
 
 const sourceHome = dirname(fileURLToPath(import.meta.url));
 
@@ -101,7 +101,7 @@ function claimInstance(statePath) {
 export function createGedankenraumServer({
   statePath = defaultStatePath(),
   token = randomBytes(24).toString('hex'),
-  analyzer = createLocalAnalyzer(),
+  analyzer = createCodexAnalyzer(),
   readLink = createIdeaLinkReader(),
 } = {}) {
   const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, readLink });
@@ -145,7 +145,7 @@ export function createGedankenraumServer({
         const refusal = guard(req);
         if (refusal) return writeJson(res, 403, { error: refusal });
         writeJson(res, 200, { stopped: true });
-        setImmediate(requestShutdown);
+        setImmediate(() => requestShutdown().catch(() => server.close()));
         return;
       }
       if (req.method === 'GET' && assets.has(url.pathname)) {
@@ -161,7 +161,10 @@ export function createGedankenraumServer({
     }
   });
 
-  requestShutdown = () => server.close();
+  requestShutdown = async () => {
+    await analyzer.stop?.();
+    server.close();
+  };
   return {
     server,
     statePath,

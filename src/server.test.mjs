@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { createLocalAnalyzer } from './local-analysis.mjs';
 import { createGedankenraumServer, defaultStatePath } from './server.mjs';
 
 const statusWithHost = (port, host) => new Promise((resolve, reject) => {
@@ -32,6 +33,7 @@ test('the local HTTP interface serves, protects, persists and shuts down', async
   const app = createGedankenraumServer({
     statePath,
     token: 'secret',
+    analyzer: createLocalAnalyzer(),
     readLink: async () => { throw new Error('not used'); },
   });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));

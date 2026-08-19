@@ -1,7 +1,7 @@
 # Gedankenraum
 
-Ein lokaler Ort für Links und kurze Notizen. Gedankenraum liest Links, verdichtet Inhalte lokal,
-ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
+Ein lokaler Ort für Links und kurze Notizen. Gedankenraum liest Links, lässt sie durch Codex
+verdichten, ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
 
 ## Starten und beenden
 
@@ -22,9 +22,11 @@ Standardmäßig liegen alle Gedanken hier:
 %LOCALAPPDATA%\Gedankenraum\ideas.json
 ```
 
-Mit `GEDANKENRAUM_HOME` kann ein anderer Ordner gewählt werden. Gedankenraum speichert keine Daten
-in einer Cloud. Beim Erfassen eines Links wird dessen öffentlich erreichbare Seite abgerufen; die
-anschließende Verdichtung findet lokal statt.
+Mit `GEDANKENRAUM_HOME` kann ein anderer Ordner gewählt werden. Gedankenraum speichert selbst keine
+Daten in einer Cloud. Beim Erfassen werden Notiz oder gelesener Linkinhalt sowie die Namen bereits
+vorhandener Themen für die Analyse an Codex übertragen. Verwendet werden `gpt-5.6-luna` und
+Reasoning Effort `xhigh`. Dafür muss die Codex-CLI installiert und über `codex login` angemeldet
+sein. Ist Codex nicht verfügbar, wird sichtbar auf die einfache lokale Analyse zurückgefallen.
 
 ### Bestehende OpBoard-Gedanken übernehmen
 
@@ -40,7 +42,8 @@ Die alte Datei findet sich normalerweise in einem Unterordner von:
 
 ## Entwicklung
 
-Voraussetzung ist Node.js 22.5 oder neuer. Die Anwendung selbst hat keine Paketabhängigkeiten.
+Voraussetzung ist Node.js 22.5 oder neuer. Für KI-Zusammenfassungen wird zusätzlich eine angemeldete
+Codex-CLI benötigt. Die Anwendung selbst hat keine Paketabhängigkeiten.
 
 ```powershell
 npm test

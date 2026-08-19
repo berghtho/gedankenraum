@@ -109,6 +109,9 @@ export function initGedankenraum({ root, getToken }) {
       selectedId = result.idea.id;
       captureInput.value = '';
       typeLabel.textContent = 'NOTIZ ODER LINK';
+      status.textContent = result.idea.engine;
+      status.classList.toggle('is-fallback', result.idea.engine === 'Lokale Analyse');
+      showMessage(result.warning);
       render();
     } catch (error) {
       showMessage(error.message, true);

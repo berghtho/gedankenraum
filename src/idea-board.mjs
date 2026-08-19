@@ -93,7 +93,7 @@ export class IdeaBoard {
     };
     state.ideas.unshift(idea);
     this.#write(state);
-    return { idea: structuredClone(idea) };
+    return { idea: structuredClone(idea), warning: clean(result.warning) || null };
   }
 
   #retopic(command) {
