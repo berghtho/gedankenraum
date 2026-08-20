@@ -17,6 +17,58 @@ test('link reader extracts bounded readable HTML', async () => {
   assert.equal(page.text, 'Hallo Architektur.');
 });
 
+test('link reader uses YouTube metadata when the page body has no useful content', async () => {
+  const read = createIdeaLinkReader({
+    resolveHost: publicDns,
+    fetchPage: async () => new Response(`<!doctype html><html><head>
+      <meta property="og:title" content="Warum tiefe Module helfen">
+      <meta name="description" content="In diesem Video geht es um kleine Schnittstellen und verborgene Komplexität.">
+      <title>Warum tiefe Module helfen - YouTube</title>
+      </head><body><script>window.ytInitialData = {};</script></body></html>`, {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    }),
+  });
+
+  const page = await read('https://www.youtube.com/watch?v=abcdefghijk');
+  assert.equal(page.title, 'Warum tiefe Module helfen');
+  assert.equal(page.text, 'In diesem Video geht es um kleine Schnittstellen und verborgene Komplexität.');
+});
+
+test('link reader adds a public YouTube caption track to the description', async () => {
+  const requests = [];
+  const player = {
+    videoDetails: { title: 'Deep Modules', shortDescription: 'A talk about module design.' },
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [{ baseUrl: 'https://www.youtube.com/api/timedtext?v=abcdefghijk', languageCode: 'en' }],
+      },
+    },
+  };
+  const read = createIdeaLinkReader({
+    resolveHost: publicDns,
+    fetchPage: async (target) => {
+      requests.push(target.url.href);
+      if (target.url.pathname === '/api/timedtext') {
+        return new Response(JSON.stringify({
+          events: [
+            { segs: [{ utf8: 'Deep modules ' }, { utf8: 'hide complexity.' }] },
+            { segs: [{ utf8: 'Small interfaces matter.' }] },
+          ],
+        }), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+      }
+      return new Response(`<html><head><script>const playerKey = 'ytInitialPlayerResponse';</script>${' '.repeat(250)}
+        <script>var ytInitialPlayerResponse = ${JSON.stringify(player)};</script></head><body></body></html>`, {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    },
+  });
+
+  const page = await read('https://youtu.be/abcdefghijk');
+  assert.equal(page.title, 'Deep Modules');
+  assert.equal(page.text, 'A talk about module design. Transkript: Deep modules hide complexity. Small interfaces matter.');
+  assert.equal(requests.length, 2);
+});
+
 test('link reader refuses private destinations before fetching', async () => {
   let fetched = false;
   const read = createIdeaLinkReader({

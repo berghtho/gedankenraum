@@ -94,24 +94,87 @@ function decodeEntities(value) {
   });
 }
 
+const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+function metaContent(html, names) {
+  const wanted = new Set(names);
+  const tags = html.match(/<meta\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi) ?? [];
+  for (const tag of tags) {
+    const attributes = new Map();
+    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g)) {
+      attributes.set(match[1].toLowerCase(), match[2] ?? match[3] ?? match[4] ?? '');
+    }
+    const name = (attributes.get('property') ?? attributes.get('name') ?? '').toLowerCase();
+    if (wanted.has(name) && attributes.has('content')) return compact(decodeEntities(attributes.get('content')));
+  }
+  return '';
+}
+
 function readableHtml(html) {
-  const title = decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').replace(/\s+/g, ' ').trim();
-  const text = decodeEntities(html
+  const documentTitle = compact(decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? ''));
+  const title = metaContent(html, ['og:title', 'twitter:title']) || documentTitle;
+  const description = metaContent(html, ['description', 'og:description', 'twitter:description']);
+  const text = compact(decodeEntities(html
     .replace(/<(head|title|script|style|noscript|svg|canvas|nav|footer|form|dialog)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<!--([\s\S]*?)-->/g, ' ')
-    .replace(/<[^>]+>/g, ' '))
-    .replace(/\s+/g, ' ').trim();
-  return { title: title || null, text };
+    .replace(/<[^>]+>/g, ' ')));
+  return { title: title || null, description, text };
+}
+
+function embeddedJson(html, marker) {
+  let markerAt = html.indexOf(marker);
+  while (markerAt >= 0) {
+    const start = html.indexOf('{', markerAt + marker.length);
+    if (start < 0 || start - markerAt > 200) {
+      markerAt = html.indexOf(marker, markerAt + marker.length);
+      continue;
+    }
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < html.length; index += 1) {
+      const character = html[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') quoted = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}' && --depth === 0) {
+        try { return JSON.parse(html.slice(start, index + 1)); } catch { break; }
+      }
+    }
+    markerAt = html.indexOf(marker, markerAt + marker.length);
+  }
+  return null;
+}
+
+function youtubeHost(hostname) {
+  const host = hostname.toLowerCase();
+  return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com') ||
+    host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com');
+}
+
+function captionText(raw) {
+  try {
+    const payload = JSON.parse(raw);
+    return compact((payload.events ?? [])
+      .map((event) => (event.segs ?? []).map((segment) => segment.utf8 ?? '').join(''))
+      .join(' '));
+  } catch {
+    return compact([...raw.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/gi)]
+      .map((match) => decodeEntities(match[1]))
+      .join(' ')).slice(0, 40_000);
+  }
 }
 
 export function createIdeaLinkReader({ fetchPage = requestPinned, resolveHost = lookup } = {}) {
-  return async function readLink(value) {
+  const fetchFollowing = async (value, headers) => {
     let target = await publicTarget(value, resolveHost);
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-      const response = await fetchPage(target, {
-        signal: AbortSignal.timeout(12_000),
-        headers: { 'user-agent': 'Gedankenraum/1.0', accept: 'text/html,text/plain;q=0.9' },
-      });
+      const response = await fetchPage(target, { signal: AbortSignal.timeout(12_000), headers });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         if (redirects === MAX_REDIRECTS) throw new Error('Zu viele Weiterleitungen.');
         const location = response.headers.get('location');
@@ -120,13 +183,46 @@ export function createIdeaLinkReader({ fetchPage = requestPinned, resolveHost = 
         continue;
       }
       if (!response.ok) throw new Error(`Seite antwortet mit HTTP ${response.status}.`);
-      const type = response.headers.get('content-type') ?? '';
-      if (!/^(text\/html|text\/plain)(?:;|$)/i.test(type)) throw new Error('Link ist keine lesbare Textseite.');
-      const raw = await limitedText(response);
-      const content = /text\/html/i.test(type) ? readableHtml(raw) : { title: null, text: raw.replace(/\s+/g, ' ').trim() };
-      if (!content.text) throw new Error('Seite enthält keinen lesbaren Text.');
-      return { url: target.url.href, ...content };
+      return { response, target };
     }
     throw new Error('Zu viele Weiterleitungen.');
+  };
+
+  const youtubeTranscript = async (player) => {
+    const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (!Array.isArray(tracks) || !tracks.length) return '';
+    const track = tracks.find((candidate) => candidate.kind !== 'asr') ?? tracks[0];
+    if (typeof track?.baseUrl !== 'string') return '';
+    const url = new URL(track.baseUrl);
+    url.searchParams.set('fmt', 'json3');
+    const { response } = await fetchFollowing(url.href, {
+      'user-agent': 'Gedankenraum/1.0',
+      accept: 'application/json,text/xml;q=0.9,text/plain;q=0.8',
+    });
+    return captionText(await limitedText(response)).slice(0, 40_000);
+  };
+
+  return async function readLink(value) {
+    const { response, target } = await fetchFollowing(value, {
+      'user-agent': 'Gedankenraum/1.0',
+      accept: 'text/html,text/plain;q=0.9',
+    });
+    const type = response.headers.get('content-type') ?? '';
+    if (!/^(text\/html|text\/plain)(?:;|$)/i.test(type)) throw new Error('Link ist keine lesbare Textseite.');
+    const raw = await limitedText(response);
+    let content = /text\/html/i.test(type)
+      ? readableHtml(raw)
+      : { title: null, description: '', text: compact(raw) };
+    if (/text\/html/i.test(type) && youtubeHost(target.url.hostname)) {
+      const player = embeddedJson(raw, 'ytInitialPlayerResponse');
+      const title = compact(player?.videoDetails?.title) || content.title;
+      const description = compact(player?.videoDetails?.shortDescription) || content.description;
+      let transcript = '';
+      try { transcript = await youtubeTranscript(player); } catch { /* Metadata remains useful without captions. */ }
+      const text = [description, transcript && `Transkript: ${transcript}`].filter(Boolean).join(' ') || content.text;
+      content = { title, description, text };
+    }
+    if (!content.text) throw new Error('Seite enthält keinen lesbaren Text.');
+    return { url: target.url.href, title: content.title, text: content.text };
   };
 }
