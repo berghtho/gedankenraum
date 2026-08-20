@@ -24,7 +24,13 @@ Standardmäßig liegen alle Gedanken hier:
 %LOCALAPPDATA%\Gedankenraum\ideas.json
 ```
 
-Mit `GEDANKENRAUM_HOME` kann ein anderer Ordner gewählt werden. Gedankenraum speichert selbst keine
+Über `SPEICHER` oben rechts kann ein anderer lokaler Ordner gewählt werden, etwa ein synchronisierter
+OneDrive-Ordner. Ist dort bereits eine `ideas.json` vorhanden, fragt Gedankenraum, ob beide Sammlungen
+zusammengeführt oder die Zieldatei ersetzt werden soll. Ist noch keine vorhanden, wird die aktuelle
+Sammlung dorthin übernommen. Die Auswahl gilt auch nach einem Neustart.
+
+Alternativ kann mit `GEDANKENRAUM_HOME` ein anderer Ordner fest vorgegeben werden. In diesem Fall ist
+die Auswahl in der UI deaktiviert. Gedankenraum speichert selbst keine
 Daten in einer Cloud. Beim Erfassen werden Notiz oder gelesener Linkinhalt sowie die Namen bereits
 vorhandener Themen für die Analyse an Codex übertragen. Verwendet werden `gpt-5.6-luna` und
 Reasoning Effort `xhigh`. Dafür muss die Codex-CLI installiert und über `codex login` angemeldet

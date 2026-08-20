@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
@@ -14,11 +14,66 @@ import { createIdeaLinkReader } from './idea-link-reader.mjs';
 
 const sourceHome = dirname(fileURLToPath(import.meta.url));
 
-export function defaultStatePath(env = process.env, platform = process.platform) {
-  const home = env.GEDANKENRAUM_HOME || (platform === 'win32' && env.LOCALAPPDATA
+export function defaultAppDirectory(env = process.env, platform = process.platform) {
+  const home = platform === 'win32' && env.LOCALAPPDATA
     ? join(env.LOCALAPPDATA, 'Gedankenraum')
-    : join(homedir(), '.gedankenraum'));
-  return join(resolve(home), 'ideas.json');
+    : join(homedir(), '.gedankenraum');
+  return resolve(home);
+}
+
+export function defaultStatePath(env = process.env, platform = process.platform) {
+  return join(resolve(env.GEDANKENRAUM_HOME || defaultAppDirectory(env, platform)), 'ideas.json');
+}
+
+export function defaultSettingsPath(env = process.env, platform = process.platform) {
+  return join(defaultAppDirectory(env, platform), 'settings.json');
+}
+
+export function configuredStatePath(env = process.env, platform = process.platform) {
+  if (env.GEDANKENRAUM_HOME) return defaultStatePath(env, platform);
+  const settingsPath = defaultSettingsPath(env, platform);
+  if (!existsSync(settingsPath)) return defaultStatePath(env, platform);
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  } catch {
+    throw new Error(`Die Einstellungen in ${settingsPath} konnten nicht gelesen werden.`);
+  }
+  if (settings?.version !== 1 || typeof settings.directory !== 'string' || !isAbsolute(settings.directory)) {
+    throw new Error(`Die Einstellungen in ${settingsPath} enthalten keinen gültigen Speicherort.`);
+  }
+  const directory = resolve(settings.directory);
+  if (!existsSync(directory) || !statSync(directory).isDirectory()) {
+    throw new Error(`Der konfigurierte Speicherort ${directory} ist nicht verfügbar.`);
+  }
+  return join(directory, 'ideas.json');
+}
+
+function writeStorageSettings(settingsPath, directory) {
+  atomicReplaceText(settingsPath, `${JSON.stringify({ version: 1, directory }, null, 2)}\n`);
+}
+
+function browseForDirectory(initialDirectory, platform = process.platform) {
+  if (platform !== 'win32') throw new IdeaBoardValidationError('Die Ordnerauswahl ist auf diesem System nicht verfügbar.');
+  const script = [
+    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
+    "$dialog.Description = 'Speicherort für ideas.json wählen'",
+    '$initial = $env:GEDANKENRAUM_INITIAL_DIRECTORY',
+    'if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) { $dialog.SelectedPath = $initial }',
+    'if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }',
+  ].join('; ');
+  return new Promise((resolveSelection, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true,
+      env: { ...process.env, GEDANKENRAUM_INITIAL_DIRECTORY: initialDirectory ?? '' },
+    }, (error, stdout) => {
+      if (error) return reject(new Error('Die Windows-Ordnerauswahl konnte nicht geöffnet werden.'));
+      return resolveSelection(stdout.trim() || null);
+    });
+  });
 }
 
 function writeJson(res, code, payload) {
@@ -62,8 +117,7 @@ function processIsRunning(pid) {
   }
 }
 
-function claimInstance(statePath) {
-  const lockPath = join(dirname(statePath), '.instance.json');
+function claimInstance(lockPath) {
   mkdirSync(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -103,6 +157,9 @@ export function createGedankenraumServer({
   token = randomBytes(24).toString('hex'),
   analyzer = createCodexAnalyzer(),
   readLink = createIdeaLinkReader(),
+  settingsPath = defaultSettingsPath(),
+  storageConfigurable = !process.env.GEDANKENRAUM_HOME,
+  selectDirectory = browseForDirectory,
 } = {}) {
   const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, readLink });
   let expectedOrigin = null;
@@ -135,6 +192,54 @@ export function createGedankenraumServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/ideas/status') {
         return writeJson(res, 200, await analyzer.status());
+      }
+      if (req.method === 'GET' && url.pathname === '/api/storage') {
+        return writeJson(res, 200, {
+          directory: dirname(board.path),
+          filePath: board.path,
+          configurable: storageConfigurable,
+          canBrowse: storageConfigurable && process.platform === 'win32',
+        });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/storage/browse') {
+        const refusal = guard(req);
+        if (refusal) return writeJson(res, 403, { error: refusal });
+        if (!storageConfigurable) throw new IdeaBoardValidationError('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
+        const { initialDirectory } = await readBody(req);
+        return writeJson(res, 200, { directory: await selectDirectory(initialDirectory) });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/storage') {
+        const refusal = guard(req);
+        if (refusal) return writeJson(res, 403, { error: refusal });
+        if (!storageConfigurable) throw new IdeaBoardValidationError('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
+        const { directory, mode } = await readBody(req);
+        if (typeof directory !== 'string' || !directory.trim() || !isAbsolute(directory.trim())) {
+          throw new IdeaBoardValidationError('Bitte einen vollständigen Ordnerpfad angeben.');
+        }
+        if (mode !== undefined && !['merge', 'replace'].includes(mode)) {
+          throw new IdeaBoardValidationError('Unbekannte Auswahl für die vorhandene Datendatei.');
+        }
+        const nextDirectory = resolve(directory.trim());
+        if (!existsSync(nextDirectory) || !statSync(nextDirectory).isDirectory()) {
+          throw new IdeaBoardValidationError('Der gewählte Ordner existiert nicht.');
+        }
+        const nextPath = join(nextDirectory, 'ideas.json');
+        const previousPath = board.path;
+        if (nextPath !== previousPath && existsSync(nextPath) && !mode) {
+          return writeJson(res, 409, {
+            error: 'Am gewählten Speicherort existiert bereits eine ideas.json.',
+            requiresDecision: true,
+            filePath: nextPath,
+          });
+        }
+        const result = await board.switchStorage(nextPath, mode ?? 'open');
+        try {
+          writeStorageSettings(settingsPath, nextDirectory);
+        } catch (error) {
+          await board.switchStorage(previousPath);
+          throw error;
+        }
+        return writeJson(res, 200, { ...result, directory: nextDirectory, filePath: board.path });
       }
       if (req.method === 'POST' && url.pathname === '/api/ideas/execute') {
         const refusal = guard(req);
@@ -197,8 +302,8 @@ async function listen(server, preferredPort) {
 }
 
 export async function start({ open = false, preferredPort = Number(process.env.GEDANKENRAUM_PORT) || 7788 } = {}) {
-  const statePath = defaultStatePath();
-  const instance = claimInstance(statePath);
+  const statePath = configuredStatePath();
+  const instance = claimInstance(join(defaultAppDirectory(), '.instance.json'));
   if (instance.existing) {
     console.log('Gedankenraum läuft bereits.');
     if (open && instance.existing.url) openBrowser(instance.existing.url);

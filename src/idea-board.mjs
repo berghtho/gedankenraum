@@ -49,6 +49,14 @@ export class IdeaBoard {
     return operation;
   }
 
+  switchStorage(path, mode = 'open') {
+    if (!path || typeof path !== 'string') throw new TypeError('IdeaBoard requires a state path');
+    if (!['open', 'merge', 'replace'].includes(mode)) throw new TypeError('Unknown storage switch mode');
+    const operation = this.pending.then(() => this.#switchStorage(path, mode));
+    this.pending = operation.catch(() => {});
+    return operation;
+  }
+
   async #execute(command) {
     if (!command || typeof command !== 'object' || Array.isArray(command)) {
       throw new IdeaBoardValidationError('command must be an object');
@@ -117,9 +125,31 @@ export class IdeaBoard {
     return { idea: structuredClone(idea) };
   }
 
+  #switchStorage(path, mode) {
+    if (path === this.path) return { ...this.snapshot(), created: false, action: 'unchanged' };
+    const created = !existsSync(path);
+    const current = this.#read();
+    let state = current;
+    if (!created && mode === 'open') state = this.#readFrom(path);
+    if (!created && mode === 'merge') {
+      const target = this.#readFrom(path);
+      const currentIds = new Set(current.ideas.map((idea) => idea.id).filter((id) => typeof id === 'string'));
+      state = {
+        version: 1,
+        ideas: [...current.ideas, ...target.ideas.filter((idea) => !currentIds.has(idea.id))],
+      };
+    }
+    if (created || mode !== 'open') atomicReplaceText(path, `${JSON.stringify(state, null, 2)}\n`);
+    this.path = path;
+    return { ideas: structuredClone(state.ideas), created, action: created ? 'created' : mode };
+  }
+
   #read() {
-    if (!existsSync(this.path)) return emptyState();
-    const parsed = JSON.parse(readFileSync(this.path, 'utf8'));
+    return existsSync(this.path) ? this.#readFrom(this.path) : emptyState();
+  }
+
+  #readFrom(path) {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
     if (parsed?.version !== 1 || !Array.isArray(parsed.ideas)) {
       throw new Error('Die Datendatei hat ein unbekanntes Format.');
     }

@@ -13,6 +13,7 @@
       <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Gedanken durchsuchen"></label>
       <span class="ib-count" data-idea-count>0 VON 0</span>
       <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
+      <button class="ib-storage-open" data-storage-open type="button" title="Speicherort einstellen">SPEICHER</button>
       <button class="ib-stop" data-stop type="button">BEENDEN</button>
     </header>
     <div class="ib-capture-bar" data-idea-drop>
@@ -31,6 +32,26 @@
       <div class="ib-list" data-idea-map></div>
       <aside class="ib-detail" data-idea-detail><div class="ib-no-selection"><p>Gedankenraum wird geladen.</p></div></aside>
     </div>
+    <dialog class="ib-storage-dialog" data-storage-dialog aria-labelledby="storage-title">
+      <div class="ib-storage-head">
+        <div><span>DATENDATEI</span><h2 id="storage-title">Speicherort</h2></div>
+        <button class="ib-dialog-close" data-storage-close type="button" aria-label="Dialog schließen">✕</button>
+      </div>
+      <p>Wähle einen lokalen Ordner, zum Beispiel in OneDrive. Gedankenraum verwendet darin die Datei <code>ideas.json</code>.</p>
+      <label class="ib-storage-field">
+        <span>ORDNER</span>
+        <span class="ib-storage-input"><input data-storage-directory type="text" autocomplete="off" spellcheck="false"><button data-storage-browse type="button">AUSWÄHLEN</button></span>
+      </label>
+      <div class="ib-storage-file">DATENDATEI <code data-storage-file></code></div>
+      <p class="ib-storage-note">Existiert dort bereits eine <code>ideas.json</code>, entscheidest du zwischen Zusammenführen und Ersetzen. Andernfalls wird die aktuelle Sammlung dorthin übernommen.</p>
+      <div class="ib-storage-message" data-storage-message hidden></div>
+      <div class="ib-storage-decision" data-storage-decision hidden>
+        <span>DATEI BEREITS VORHANDEN</span>
+        <strong>Wie sollen die Sammlungen behandelt werden?</strong>
+        <div><button data-storage-merge type="button">ZUSAMMENFÜHREN</button><button class="is-danger" data-storage-replace type="button">ZIELDATEI ERSETZEN</button></div>
+      </div>
+      <div class="ib-storage-actions"><button data-storage-cancel type="button">ABBRECHEN</button><button class="is-primary" data-storage-save type="button">SPEICHERORT VERWENDEN</button></div>
+    </dialog>
   </main>
   <script type="module" src="/app.mjs"></script>
 </body>

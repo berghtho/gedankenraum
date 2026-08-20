@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -76,4 +76,40 @@ test('concurrent captures serialize instead of losing a thought', async () => {
   releaseFirst();
   await Promise.all([first, second]);
   assert.deepEqual(board.snapshot().ideas.map((idea) => idea.title), ['second', 'first']);
+});
+
+test('switching storage copies current data or opens an existing collection', async () => {
+  const board = makeBoard();
+  await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  const copiedPath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-copy-')), 'ideas.json');
+
+  const copied = await board.switchStorage(copiedPath);
+  assert.equal(copied.created, true);
+  assert.equal(JSON.parse(readFileSync(copiedPath, 'utf8')).ideas[0].title, 'Tiefe Module');
+
+  const existingPath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-existing-')), 'ideas.json');
+  writeFileSync(existingPath, `${JSON.stringify({ version: 1, ideas: [{ id: 'vorhanden' }] })}\n`);
+  const opened = await board.switchStorage(existingPath);
+  assert.equal(opened.created, false);
+  assert.deepEqual(opened.ideas, [{ id: 'vorhanden' }]);
+});
+
+test('merging keeps both collections without duplicate ids and replacing overwrites the target', async () => {
+  const board = makeBoard();
+  const captured = await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  const mergePath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-merge-')), 'ideas.json');
+  writeFileSync(mergePath, `${JSON.stringify({
+    version: 1,
+    ideas: [{ ...captured.idea, title: 'Veraltete Kopie' }, { ...captured.idea, id: 'extern', title: 'Externer Gedanke' }],
+  })}\n`);
+
+  const merged = await board.switchStorage(mergePath, 'merge');
+  assert.equal(merged.action, 'merge');
+  assert.deepEqual(merged.ideas.map((idea) => idea.title), ['Tiefe Module', 'Externer Gedanke']);
+
+  const replacePath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-replace-')), 'ideas.json');
+  writeFileSync(replacePath, `${JSON.stringify({ version: 1, ideas: [{ id: 'wird-ersetzt' }] })}\n`);
+  const replaced = await board.switchStorage(replacePath, 'replace');
+  assert.equal(replaced.action, 'replace');
+  assert.deepEqual(JSON.parse(readFileSync(replacePath, 'utf8')).ideas, merged.ideas);
 });
