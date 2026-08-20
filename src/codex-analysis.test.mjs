@@ -32,6 +32,36 @@ test('Codex analyzer uses Luna xhigh through the resolved runtime', async () => 
   assert.equal(result.engine, 'Codex · gpt-5.6-luna · xhigh');
 });
 
+test('Codex prompt requires source-grounded reporting without changing factual status', async () => {
+  let prompt;
+  const analyzer = createCodexAnalyzer({
+    resolveRuntime: async () => ({ executable: 'codex.exe' }),
+    execute: async (invocation) => {
+      prompt = invocation.prompt;
+      return {
+        title: 'OpenAI-Incident', summary: 'OpenAI berichtet über einen tatsächlichen Incident.',
+        keyPoints: [], keywords: ['Incident'], topic: 'KI',
+      };
+    },
+  });
+
+  await analyzer.analyze({
+    input: 'https://www.youtube.com/watch?v=abcdefghijk',
+    source: {
+      kind: 'link',
+      url: 'https://www.youtube.com/watch?v=abcdefghijk',
+      pageTitle: 'OpenAI: Engineering response to a production incident',
+      text: 'OpenAI describes an actual production incident and its response.',
+    },
+    existingTopics: ['KI'],
+  });
+
+  assert.match(prompt, /Quellentitel: OpenAI: Engineering response to a production incident/);
+  assert.match(prompt, /keine eigene Meinung/i);
+  assert.match(prompt, /tatsächlich.*hypothetisch/i);
+  assert.match(prompt, /nicht im Quellmaterial belegt/i);
+});
+
 test('Codex process arguments fix model and effort and remove interactive tools', () => {
   const args = codexArguments('schema.json', 'result.json');
   assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.6-luna');
