@@ -29,6 +29,9 @@ OneDrive-Ordner. Ist dort bereits eine `ideas.json` vorhanden, fragt Gedankenrau
 zusammengeführt oder die Zieldatei ersetzt werden soll. Ist noch keine vorhanden, wird die aktuelle
 Sammlung dorthin übernommen. Die Auswahl gilt auch nach einem Neustart.
 
+Über `IMPORT` kann eine bestehende `ideas.json` ausgewählt werden. Ihre Gedanken werden mit der
+aktuellen Sammlung zusammengeführt; bereits vorhandene IDs werden übersprungen.
+
 Alternativ kann mit `GEDANKENRAUM_HOME` ein anderer Ordner fest vorgegeben werden. In diesem Fall ist
 die Auswahl in der UI deaktiviert. Gedankenraum speichert selbst keine
 Daten in einer Cloud. Beim Erfassen werden Notiz oder gelesener Linkinhalt sowie die Namen bereits
@@ -38,9 +41,8 @@ sein. Ist Codex nicht verfügbar, wird sichtbar auf die einfache lokale Analyse 
 
 ### Bestehende OpBoard-Gedanken übernehmen
 
-Gedankenraum verwendet dasselbe Dateiformat wie das frühere IdeaBoard bzw. OpBoard. Gedankenraum zuerst über
-`BEENDEN` schließen und dann die bisherige `ideas.json` nach
-`%LOCALAPPDATA%\Gedankenraum\ideas.json` kopieren. Beim nächsten Start ist die Sammlung vorhanden.
+Gedankenraum verwendet dasselbe Dateiformat wie das frühere IdeaBoard bzw. OpBoard. Die bisherige
+`ideas.json` kann direkt über `IMPORT` übernommen werden.
 
 Die alte Datei findet sich normalerweise in einem Unterordner von:
 

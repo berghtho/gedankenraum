@@ -76,6 +76,19 @@ test('the local HTTP interface serves, protects, persists and shuts down', async
     assert.equal(accepted.status, 200);
     const snapshot = await fetch(`${origin}/api/ideas`).then((response) => response.json());
     assert.equal(snapshot.ideas.length, 1);
+    const imported = await fetch(`${origin}/api/ideas/import`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'secret' },
+      body: JSON.stringify({
+        version: 1,
+        ideas: [snapshot.ideas[0], { ...snapshot.ideas[0], id: 'imported', title: 'Importierter Gedanke' }],
+      }),
+    });
+    assert.equal(imported.status, 200);
+    const importResult = await imported.json();
+    assert.equal(importResult.imported, 1);
+    assert.equal(importResult.skipped, 1);
+    assert.equal(importResult.ideas.length, 2);
     writeFileSync(join(externalDirectory, 'ideas.json'), `${JSON.stringify({
       version: 1,
       ideas: [{ ...snapshot.ideas[0], id: 'external', title: 'Externer Gedanke' }],
@@ -114,7 +127,7 @@ test('the local HTTP interface serves, protects, persists and shuts down', async
     });
     assert.equal(merged.status, 200);
     assert.equal((await merged.json()).action, 'merge');
-    assert.equal(JSON.parse(readFileSync(join(externalDirectory, 'ideas.json'), 'utf8')).ideas.length, 2);
+    assert.equal(JSON.parse(readFileSync(join(externalDirectory, 'ideas.json'), 'utf8')).ideas.length, 3);
     assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).directory, externalDirectory);
 
     const closed = new Promise((resolve) => app.server.once('close', resolve));

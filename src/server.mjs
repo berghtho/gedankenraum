@@ -246,6 +246,11 @@ export function createGedankenraumServer({
         if (refusal) return writeJson(res, 403, { error: refusal });
         return writeJson(res, 200, await board.execute(await readBody(req)));
       }
+      if (req.method === 'POST' && url.pathname === '/api/ideas/import') {
+        const refusal = guard(req);
+        if (refusal) return writeJson(res, 403, { error: refusal });
+        return writeJson(res, 200, await board.importState(await readBody(req, 10 * 1024 * 1024)));
+      }
       if (req.method === 'POST' && url.pathname === '/api/shutdown') {
         const refusal = guard(req);
         if (refusal) return writeJson(res, 403, { error: refusal });

@@ -16,10 +16,10 @@ body { min-height: 100vh; }
 .ib-engine { display:flex;align-items:center;gap:8px;color:var(--ib-muted);font:500 10px 'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap; }
 .ib-engine::before { content:'';width:7px;height:7px;border-radius:50%;background:var(--ib-lime);box-shadow:0 0 0 4px rgba(213,255,101,.09); }
 .ib-engine.is-fallback::before { background:#ffb86b;box-shadow:0 0 0 4px rgba(255,184,107,.09); }
-.ib-stop,.ib-storage-open { height:30px;padding:0 10px;border:1px solid rgba(255,143,143,.3);border-radius:8px;background:transparent;color:#a8aaa0;font:500 8px 'DM Mono',monospace;letter-spacing:.1em;cursor:pointer; }
+.ib-stop,.ib-storage-open,.ib-import-open { height:30px;padding:0 10px;border:1px solid rgba(255,143,143,.3);border-radius:8px;background:transparent;color:#a8aaa0;font:500 8px 'DM Mono',monospace;letter-spacing:.1em;cursor:pointer; }
 .ib-stop:hover { border-color:#ff8f8f;color:#ff8f8f; }
-.ib-storage-open { border-color:rgba(236,235,227,.16); }
-.ib-storage-open:hover { border-color:rgba(213,255,101,.45);color:var(--ib-lime); }
+.ib-storage-open,.ib-import-open { border-color:rgba(236,235,227,.16); }
+.ib-storage-open:hover,.ib-import-open:hover { border-color:rgba(213,255,101,.45);color:var(--ib-lime); }
 .ib-capture-bar { display:flex;align-items:center;gap:20px;padding:14px 22px;border-bottom:1px solid rgba(236,235,227,.13);background:rgba(28,29,25,.88);transition:.2s; }
 .ib-capture-bar:focus-within,.ib-capture-bar.is-dragging { border-bottom-color:var(--ib-lime);background:rgba(28,29,25,.95); }
 .ib-capture-lede { flex:none; }

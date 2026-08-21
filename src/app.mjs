@@ -67,6 +67,8 @@ export function initGedankenraum({ root, getToken }) {
   const status = root.querySelector('[data-idea-status]');
   const message = root.querySelector('[data-idea-message]');
   const count = root.querySelector('[data-idea-count]');
+  const importOpen = root.querySelector('[data-import-open]');
+  const importFile = root.querySelector('[data-import-file]');
   const storageOpen = root.querySelector('[data-storage-open]');
   const storageDialog = root.querySelector('[data-storage-dialog]');
   const storageDirectory = root.querySelector('[data-storage-directory]');
@@ -161,6 +163,32 @@ export function initGedankenraum({ root, getToken }) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') capture();
   });
   captureButton.addEventListener('click', capture);
+  importOpen.addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', async () => {
+    const [file] = importFile.files;
+    importFile.value = '';
+    if (!file) return;
+    importOpen.disabled = true;
+    showMessage('Import wird geprüft.');
+    try {
+      let imported;
+      try {
+        imported = JSON.parse(await file.text());
+      } catch {
+        throw new Error('Die gewählte Datei enthält kein gültiges JSON.');
+      }
+      const result = await post('/api/ideas/import', imported);
+      ideas = result.ideas;
+      selectedId = ideas[0]?.id ?? null;
+      const duplicates = result.skipped ? ` ${result.skipped} Duplikat${result.skipped === 1 ? '' : 'e'} übersprungen.` : '';
+      showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}`);
+      render();
+    } catch (error) {
+      showMessage(error.message, true);
+    } finally {
+      importOpen.disabled = false;
+    }
+  });
   searchInput.addEventListener('input', render);
   root.querySelector('[data-idea-drop]').addEventListener('dragover', (event) => {
     event.preventDefault();

@@ -57,6 +57,12 @@ export class IdeaBoard {
     return operation;
   }
 
+  importState(imported) {
+    const operation = this.pending.then(() => this.#importState(imported));
+    this.pending = operation.catch(() => {});
+    return operation;
+  }
+
   async #execute(command) {
     if (!command || typeof command !== 'object' || Array.isArray(command)) {
       throw new IdeaBoardValidationError('command must be an object');
@@ -144,16 +150,47 @@ export class IdeaBoard {
     return { ideas: structuredClone(state.ideas), created, action: created ? 'created' : mode };
   }
 
+  #importState(imported) {
+    this.#validateState(imported);
+    const current = this.#read();
+    const knownIds = new Set(current.ideas.map((idea) => idea.id));
+    const additions = [];
+    let skipped = 0;
+    for (const idea of imported.ideas) {
+      if (knownIds.has(idea.id)) {
+        skipped += 1;
+        continue;
+      }
+      knownIds.add(idea.id);
+      additions.push(idea);
+    }
+    const state = { version: 1, ideas: [...current.ideas, ...additions] };
+    if (additions.length) this.#write(state);
+    return {
+      ideas: structuredClone(state.ideas),
+      imported: additions.length,
+      skipped,
+    };
+  }
+
   #read() {
     return existsSync(this.path) ? this.#readFrom(this.path) : emptyState();
   }
 
   #readFrom(path) {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
-    if (parsed?.version !== 1 || !Array.isArray(parsed.ideas)) {
-      throw new Error('Die Datendatei hat ein unbekanntes Format.');
-    }
+    this.#validateState(parsed);
     return parsed;
+  }
+
+  #validateState(state) {
+    if (state?.version !== 1 || !Array.isArray(state.ideas)) {
+      throw new IdeaBoardValidationError('Die Datendatei hat ein unbekanntes Format.');
+    }
+    if (state.ideas.some((idea) => !idea || typeof idea !== 'object' || Array.isArray(idea)
+      || typeof idea.id !== 'string' || !idea.id.trim())) {
+      throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Gedanken.');
+    }
   }
 
   #write(state) {

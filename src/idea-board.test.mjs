@@ -113,3 +113,31 @@ test('merging keeps both collections without duplicate ids and replacing overwri
   assert.equal(replaced.action, 'replace');
   assert.deepEqual(JSON.parse(readFileSync(replacePath, 'utf8')).ideas, merged.ideas);
 });
+
+test('importing merges into the current collection and skips duplicate ids', async () => {
+  const board = makeBoard();
+  const captured = await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  const imported = await board.importState({
+    version: 1,
+    ideas: [
+      { ...captured.idea, title: 'Veraltete Kopie' },
+      { ...captured.idea, id: 'extern', title: 'Externer Gedanke' },
+      { ...captured.idea, id: 'extern', title: 'Doppelter Import' },
+    ],
+  });
+
+  assert.equal(imported.imported, 1);
+  assert.equal(imported.skipped, 2);
+  assert.deepEqual(imported.ideas.map((idea) => idea.title), ['Tiefe Module', 'Externer Gedanke']);
+  assert.deepEqual(JSON.parse(readFileSync(board.path, 'utf8')).ideas, imported.ideas);
+});
+
+test('importing rejects unknown formats without changing the collection', async () => {
+  const board = makeBoard();
+  await board.execute({ type: 'capture', input: 'Bleibt erhalten' });
+  const before = readFileSync(board.path, 'utf8');
+
+  await assert.rejects(() => board.importState({ version: 2, ideas: [] }), IdeaBoardValidationError);
+  await assert.rejects(() => board.importState({ version: 1, ideas: [{}] }), IdeaBoardValidationError);
+  assert.equal(readFileSync(board.path, 'utf8'), before);
+});
