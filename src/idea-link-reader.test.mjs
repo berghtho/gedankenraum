@@ -102,12 +102,17 @@ test('link reader passes the validated address to the HTTP implementation', asyn
   assert.deepEqual(target.addresses, [{ address: '93.184.216.34', family: 4 }]);
 });
 
-test('link reader rejects oversized pages', async () => {
+test('link reader truncates oversized pages instead of rejecting them', async () => {
+  const limit = 2 * 1024 * 1024;
+  const head = '<title>Große Seite</title><main>Lesbarer Anfang.</main><script>';
+  const body = `${head}${'x'.repeat(limit)}</script><p>Kommt nie an.</p>`;
   const read = createIdeaLinkReader({
     resolveHost: publicDns,
-    fetchPage: async () => new Response('x', {
-      headers: { 'content-type': 'text/plain', 'content-length': String(2 * 1024 * 1024 + 1) },
+    fetchPage: async () => new Response(body, {
+      headers: { 'content-type': 'text/html; charset=utf-8', 'content-length': String(body.length) },
     }),
   });
-  await assert.rejects(() => read('https://example.com/large'), /zu groß/);
+  const page = await read('https://example.com/large');
+  assert.equal(page.title, 'Große Seite');
+  assert.equal(page.text, 'Lesbarer Anfang.');
 });

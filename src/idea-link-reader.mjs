@@ -60,8 +60,6 @@ function requestPinned(target, { headers, signal }) {
 }
 
 async function limitedText(response) {
-  const declared = Number(response.headers.get('content-length') ?? 0);
-  if (declared > MAX_BYTES) throw new Error('Seite ist zu groß.');
   const reader = response.body?.getReader();
   if (!reader) return '';
   const chunks = [];
@@ -69,12 +67,14 @@ async function limitedText(response) {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BYTES) {
+    const room = MAX_BYTES - size;
+    const part = value.byteLength > room ? value.subarray(0, room) : value;
+    chunks.push(part);
+    size += part.byteLength;
+    if (size >= MAX_BYTES) {
       await reader.cancel();
-      throw new Error('Seite ist zu groß.');
+      break;
     }
-    chunks.push(value);
   }
   const joined = new Uint8Array(size);
   let offset = 0;
@@ -116,6 +116,7 @@ function readableHtml(html) {
   const description = metaContent(html, ['description', 'og:description', 'twitter:description']);
   const text = compact(decodeEntities(html
     .replace(/<(head|title|script|style|noscript|svg|canvas|nav|footer|form|dialog)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(script|style|noscript|svg|canvas)[^>]*>[\s\S]*$/i, ' ')
     .replace(/<!--([\s\S]*?)-->/g, ' ')
     .replace(/<[^>]+>/g, ' ')));
   return { title: title || null, description, text };
