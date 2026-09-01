@@ -5,12 +5,31 @@ import { atomicReplaceText } from './atomic-file.mjs';
 
 const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
+const MAX_TAGS = 12;
+const MAX_TAG_LENGTH = 40;
 
 export class IdeaBoardValidationError extends Error {}
 
 const clean = (value, fallback = '') => typeof value === 'string' && value.trim()
   ? value.trim().replace(/\s+/g, ' ')
   : fallback;
+
+const cleanTag = (value) => clean(value).replace(/^#+/, '').trim().slice(0, MAX_TAG_LENGTH);
+const sameTag = (left, right) => left.toLocaleLowerCase('de-DE') === right.toLocaleLowerCase('de-DE');
+
+function normalizedTags(value) {
+  if (!Array.isArray(value)) throw new IdeaBoardValidationError('Tags müssen eine Liste sein.');
+  const tags = [];
+  for (const item of value) {
+    const tag = cleanTag(item);
+    if (!tag || tags.some((known) => sameTag(known, tag))) continue;
+    tags.push(tag);
+  }
+  if (tags.length > MAX_TAGS) throw new IdeaBoardValidationError(`Höchstens ${MAX_TAGS} Tags pro Gedanke.`);
+  return tags;
+}
+
+const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 
 function normalizedAnalysis(value, fallbackTitle) {
   const title = clean(value?.title, fallbackTitle).slice(0, 160);
@@ -70,6 +89,8 @@ export class IdeaBoard {
     }
     if (command.type === 'capture') return this.#capture(command);
     if (command.type === 'retopic') return this.#retopic(command);
+    if (command.type === 'retag') return this.#retag(command);
+    if (command.type === 'renametag') return this.#renameTag(command);
     if (command.type === 'delete') return this.#delete(command);
     throw new IdeaBoardValidationError(`unsupported command: ${clean(command.type, '(empty)')}`);
   }
@@ -97,13 +118,16 @@ export class IdeaBoard {
     }
 
     const existingTopics = [...new Set(state.ideas.map((idea) => idea.topic))];
-    const result = await this.analyze({ input, source, existingTopics });
+    const existingTags = [...new Set(state.ideas.flatMap(tagsOf))];
+    const result = await this.analyze({ input, source, existingTopics, existingTags });
     const fallbackTitle = source.pageTitle || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
     const analysis = normalizedAnalysis(result.analysis ?? result, fallbackTitle);
     const createdAt = this.now().toISOString();
     const idea = {
       id: this.makeId(),
       ...analysis,
+      // Schlagwörter (keywords) sind Vorschläge der Analyse; tags bestätigt der Mensch.
+      tags: [],
       source: source.kind,
       url: source.url,
       input,
@@ -126,6 +150,47 @@ export class IdeaBoard {
     idea.updatedAt = this.now().toISOString();
     this.#write(state);
     return { idea: structuredClone(idea) };
+  }
+
+  #retag(command) {
+    const state = this.#read();
+    const idea = state.ideas.find((candidate) => candidate.id === clean(command.id));
+    if (!idea) throw new IdeaBoardValidationError('Gedanke wurde nicht gefunden.');
+    const tags = normalizedTags(command.tags);
+    // Bestehende Schreibweise eines Tags in der Sammlung übernehmen, damit #ai und #AI nicht auseinanderlaufen.
+    const known = new Map();
+    for (const other of state.ideas) for (const tag of tagsOf(other)) known.set(tag.toLocaleLowerCase('de-DE'), tag);
+    idea.tags = tags.map((tag) => known.get(tag.toLocaleLowerCase('de-DE')) ?? tag);
+    idea.updatedAt = this.now().toISOString();
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  #renameTag(command) {
+    const from = cleanTag(command.from);
+    const to = cleanTag(command.to);
+    if (!from || !to) throw new IdeaBoardValidationError('Tag darf nicht leer sein.');
+    const state = this.#read();
+    const existing = state.ideas.flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
+    const target = existing ?? to;
+    const merged = !!existing && !sameTag(from, to);
+    let changed = 0;
+    const updatedAt = this.now().toISOString();
+    for (const idea of state.ideas) {
+      const tags = tagsOf(idea);
+      if (!tags.some((tag) => sameTag(tag, from))) continue;
+      const next = [];
+      for (const tag of tags) {
+        const replacement = sameTag(tag, from) ? target : tag;
+        if (!next.some((known) => sameTag(known, replacement))) next.push(replacement);
+      }
+      idea.tags = next;
+      idea.updatedAt = updatedAt;
+      changed += 1;
+    }
+    if (!changed) throw new IdeaBoardValidationError('Tag wurde nicht gefunden.');
+    this.#write(state);
+    return { ideas: structuredClone(state.ideas), tag: target, merged, changed };
   }
 
   #delete(command) {

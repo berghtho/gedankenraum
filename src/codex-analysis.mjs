@@ -29,10 +29,13 @@ const RESULT_SCHEMA = {
 
 const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 
-function promptFor({ input, source, existingTopics }) {
+function promptFor({ input, source, existingTopics, existingTags = [] }) {
   const boundary = `UNTRUSTED_SOURCE_${randomBytes(16).toString('hex')}`;
   const topics = existingTopics.length
     ? existingTopics.slice(0, 50).map(compact).join(' | ').slice(0, 4_000)
+    : '(noch keine)';
+  const tags = existingTags.length
+    ? existingTags.slice(0, 80).map(compact).join(' | ').slice(0, 4_000)
     : '(noch keine)';
   return [
     'Analysiere den folgenden Inhalt für den privaten Gedankenraum.',
@@ -44,8 +47,10 @@ function promptFor({ input, source, existingTopics }) {
     'Was nicht im Quellmaterial belegt ist, lasse weg. Bei dünnem Quellmaterial antworte entsprechend knapp, statt Lücken zu füllen.',
     'Erzeuge einen kurzen sachlichen Titel, eine präzise Zusammenfassung, bis zu vier Kernpunkte, drei bis sechs Schlagwörter und ein stabiles breites Thema.',
     'Verwende eines der bestehenden Themen exakt, wenn es inhaltlich passt.',
+    'Schlagwörter dienen als Tag-Vorschläge: kurz (ein bis zwei Wörter), Großschreibung wie ein Eigenname, und ein bestehendes Schlagwort exakt wiederverwenden, wenn es passt.',
     `<${boundary}>`,
     `Bestehende Themen: ${topics}`,
+    `Bestehende Schlagwörter: ${tags}`,
     `Quelltyp: ${source.kind}${source.url ? ` · ${source.url}` : ''}`,
     `Quellentitel: ${compact(source.pageTitle) || '(nicht vorhanden)'}`,
     compact(source.text || input).slice(0, 24_000),

@@ -10,13 +10,23 @@
   <main id="gedankenraum" class="idea-board">
     <header class="ib-topbar">
       <div class="ib-brand"><span class="ib-brand-mark">G</span><span>GEDANKENRAUM</span></div>
-      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Gedanken durchsuchen"></label>
+      <nav class="ib-views" data-idea-views aria-label="Ansicht">
+        <button type="button" data-idea-view="list" aria-pressed="true">LISTE</button>
+        <button type="button" data-idea-view="time" aria-pressed="false">ZEITACHSE</button>
+        <button type="button" data-idea-view="tree" aria-pressed="false">MINDMAP</button>
+      </nav>
+      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Suchen · #tag · thema:"></label>
       <span class="ib-count" data-idea-count>0 VON 0</span>
       <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
-      <button class="ib-import-open" data-import-open type="button" title="ideas.json importieren">IMPORT</button>
+      <div class="ib-menu" data-menu>
+        <button class="ib-menu-open" data-menu-open type="button" aria-haspopup="menu" aria-expanded="false" title="Import · Speicherort · Beenden">⋯</button>
+        <div class="ib-menu-list" data-menu-list hidden role="menu">
+          <button data-import-open type="button" role="menuitem">IMPORT ideas.json</button>
+          <button data-storage-open type="button" role="menuitem">SPEICHERORT</button>
+          <button class="is-danger" data-stop type="button" role="menuitem">BEENDEN</button>
+        </div>
+      </div>
       <input data-import-file type="file" accept="application/json,.json" hidden>
-      <button class="ib-storage-open" data-storage-open type="button" title="Speicherort einstellen">SPEICHER</button>
-      <button class="ib-stop" data-stop type="button">BEENDEN</button>
     </header>
     <div class="ib-capture-bar" data-idea-drop>
       <span class="ib-capture-lede">
@@ -31,29 +41,44 @@
       <button data-idea-capture type="button" disabled>EINSORTIEREN <span>→</span></button>
     </div>
     <div class="ib-message" data-idea-message hidden></div>
-    <div class="ib-grid">
+    <div class="ib-grid" data-idea-grid>
+      <aside class="ib-rail" data-idea-rail></aside>
       <div class="ib-list" data-idea-map></div>
       <aside class="ib-detail" data-idea-detail><div class="ib-no-selection"><p>Gedankenraum wird geladen.</p></div></aside>
     </div>
-    <dialog class="ib-storage-dialog" data-storage-dialog aria-labelledby="storage-title">
-      <div class="ib-storage-head">
+
+    <dialog class="ib-dialog ib-tag-dialog" data-tag-dialog aria-labelledby="tag-title">
+      <div class="ib-dialog-head">
+        <div><span>TAG</span><h2 id="tag-title" data-tag-heading>Umbenennen</h2></div>
+        <button class="ib-dialog-close" data-tag-cancel type="button" aria-label="Dialog schließen">✕</button>
+      </div>
+      <label class="ib-dialog-field">
+        <span>NEUER NAME</span>
+        <input data-tag-name type="text" autocomplete="off" spellcheck="false" maxlength="40">
+      </label>
+      <p class="ib-dialog-note" data-tag-hint></p>
+      <div class="ib-dialog-actions"><button data-tag-cancel type="button">ABBRECHEN</button><button class="is-primary" data-tag-save type="button">UMBENENNEN</button></div>
+    </dialog>
+
+    <dialog class="ib-dialog ib-storage-dialog" data-storage-dialog aria-labelledby="storage-title">
+      <div class="ib-dialog-head">
         <div><span>DATENDATEI</span><h2 id="storage-title">Speicherort</h2></div>
         <button class="ib-dialog-close" data-storage-close type="button" aria-label="Dialog schließen">✕</button>
       </div>
       <p>Wähle einen lokalen Ordner, zum Beispiel in OneDrive. Gedankenraum verwendet darin die Datei <code>ideas.json</code>.</p>
-      <label class="ib-storage-field">
+      <label class="ib-dialog-field">
         <span>ORDNER</span>
         <span class="ib-storage-input"><input data-storage-directory type="text" autocomplete="off" spellcheck="false"><button data-storage-browse type="button">AUSWÄHLEN</button></span>
       </label>
       <div class="ib-storage-file">DATENDATEI <code data-storage-file></code></div>
-      <p class="ib-storage-note">Existiert dort bereits eine <code>ideas.json</code>, entscheidest du zwischen Zusammenführen und Ersetzen. Andernfalls wird die aktuelle Sammlung dorthin übernommen.</p>
+      <p class="ib-dialog-note">Existiert dort bereits eine <code>ideas.json</code>, entscheidest du zwischen Zusammenführen und Ersetzen. Andernfalls wird die aktuelle Sammlung dorthin übernommen.</p>
       <div class="ib-storage-message" data-storage-message hidden></div>
       <div class="ib-storage-decision" data-storage-decision hidden>
         <span>DATEI BEREITS VORHANDEN</span>
         <strong>Wie sollen die Sammlungen behandelt werden?</strong>
         <div><button data-storage-merge type="button">ZUSAMMENFÜHREN</button><button class="is-danger" data-storage-replace type="button">ZIELDATEI ERSETZEN</button></div>
       </div>
-      <div class="ib-storage-actions"><button data-storage-cancel type="button">ABBRECHEN</button><button class="is-primary" data-storage-save type="button">SPEICHERORT VERWENDEN</button></div>
+      <div class="ib-dialog-actions"><button data-storage-cancel type="button">ABBRECHEN</button><button class="is-primary" data-storage-save type="button">SPEICHERORT VERWENDEN</button></div>
     </dialog>
   </main>
   <script type="module" src="/app.mjs"></script>
