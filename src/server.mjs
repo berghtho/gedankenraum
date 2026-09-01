@@ -244,7 +244,7 @@ export function createGedankenraumServer({
       if (req.method === 'POST' && url.pathname === '/api/ideas/execute') {
         const refusal = guard(req);
         if (refusal) return writeJson(res, 403, { error: refusal });
-        return writeJson(res, 200, await board.execute(await readBody(req)));
+        return writeJson(res, 200, await board.execute(await readBody(req, 256 * 1024)));
       }
       if (req.method === 'POST' && url.pathname === '/api/ideas/import') {
         const refusal = guard(req);

@@ -16,6 +16,15 @@ Alternativ:
 npm start
 ```
 
+## Textnotizen aufbewahren
+
+Mit `TEXT AUFBEWAHREN` in der Erfassungsleiste wird die Eingabe wortgetreu gespeichert, inklusive
+Zeilenumbrüchen und bis zu 60.000 Zeichen. Das eignet sich für Texte, die später wieder nachgelesen
+werden sollen, etwa gute Erklärungen aus einer Agenten-Sitzung. Titel, Thema und Zusammenfassung werden
+trotzdem erzeugt, damit sich die Notiz einordnen und finden lässt. In der Detailansicht erscheint der
+vollständige Wortlaut mit `KOPIEREN`; die Suche durchsucht auch den Wortlaut. Links werden in diesem
+Modus nicht gelesen, sondern als Text übernommen.
+
 ## Daten
 
 Standardmäßig liegen alle Gedanken hier:

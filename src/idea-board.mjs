@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { atomicReplaceText } from './atomic-file.mjs';
 
 const MAX_INPUT = 12_000;
+const MAX_TEXT = 60_000;
 
 export class IdeaBoardValidationError extends Error {}
 
@@ -74,13 +75,18 @@ export class IdeaBoard {
   }
 
   async #capture(command) {
-    const input = clean(command.input);
-    if (!input) throw new IdeaBoardValidationError('Bitte eine Notiz oder einen Link eingeben.');
-    if (input.length > MAX_INPUT) throw new IdeaBoardValidationError(`Eingabe überschreitet ${MAX_INPUT} Zeichen.`);
+    const keep = command.keep === true;
+    const raw = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
+    const input = keep ? raw : clean(raw);
+    if (!input) throw new IdeaBoardValidationError('Bitte eine Notiz, einen Text oder einen Link eingeben.');
+    if (keep && input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Textnotiz überschreitet ${MAX_TEXT} Zeichen.`);
+    if (!keep && input.length > MAX_INPUT) {
+      throw new IdeaBoardValidationError(`Eingabe überschreitet ${MAX_INPUT} Zeichen. Längere Texte als Textnotiz aufbewahren.`);
+    }
 
     const state = this.#read();
-    const isLink = /^https?:\/\/\S+$/i.test(input);
-    let source = { kind: 'note', text: input, url: null, pageTitle: null };
+    const isLink = !keep && /^https?:\/\/\S+$/i.test(input);
+    let source = { kind: keep ? 'text' : 'note', text: input, url: null, pageTitle: null };
     if (isLink) {
       try {
         const page = await this.readLink(input);
@@ -92,7 +98,7 @@ export class IdeaBoard {
 
     const existingTopics = [...new Set(state.ideas.map((idea) => idea.topic))];
     const result = await this.analyze({ input, source, existingTopics });
-    const fallbackTitle = source.pageTitle || (isLink ? new URL(input).hostname : input.slice(0, 90));
+    const fallbackTitle = source.pageTitle || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
     const analysis = normalizedAnalysis(result.analysis ?? result, fallbackTitle);
     const createdAt = this.now().toISOString();
     const idea = {

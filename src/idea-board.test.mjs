@@ -38,6 +38,34 @@ test('capture, retopic and delete use the durable board interface', async () => 
   assert.deepEqual(board.snapshot().ideas, []);
 });
 
+test('a kept text note stays verbatim, keeps line breaks and is not read as a link', async () => {
+  let seen;
+  let linkRead = false;
+  const board = makeBoard({
+    readLink: async () => { linkRead = true; return { url: 'x', text: 'x' }; },
+    analyze: async (request) => { seen = request; return { title: 'T', summary: 'S', keyPoints: [], keywords: [], topic: 'Agenten' }; },
+  });
+  const text = '  Erklärung:\r\n\r\n1. Erster   Punkt\n2. Zweiter Punkt\nhttps://example.com/quelle  ';
+  const captured = await board.execute({ type: 'capture', input: text, keep: true });
+  assert.equal(captured.idea.source, 'text');
+  assert.equal(captured.idea.input, 'Erklärung:\n\n1. Erster   Punkt\n2. Zweiter Punkt\nhttps://example.com/quelle');
+  assert.equal(seen.source.kind, 'text');
+  assert.equal(seen.source.text, captured.idea.input);
+
+  const link = await board.execute({ type: 'capture', input: 'https://example.com/a', keep: true });
+  assert.equal(link.idea.source, 'text');
+  assert.equal(linkRead, false);
+  assert.equal(JSON.parse(readFileSync(board.path, 'utf8')).ideas[1].input, captured.idea.input);
+});
+
+test('text notes allow longer input than plain notes', async () => {
+  const board = makeBoard();
+  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), /als Textnotiz/);
+  const kept = await board.execute({ type: 'capture', input: 'x'.repeat(12_001), keep: true });
+  assert.equal(kept.idea.input.length, 12_001);
+  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep: true }), /60000/);
+});
+
 test('an unreadable link is neither analyzed nor persisted', async () => {
   const path = join(mkdtempSync(join(tmpdir(), 'gedankenraum-')), 'ideas.json');
   let analyzed = false;

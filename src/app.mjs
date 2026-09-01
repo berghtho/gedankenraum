@@ -13,6 +13,7 @@ const relativeDate = (value) => {
 };
 
 const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
+const sourceLabel = (source) => ({ link: 'LINK', text: 'TEXT' })[source] ?? 'NOTIZ';
 
 function mapMarkup(ideas, selectedId) {
   if (!ideas.length) return `<div class="ib-empty-map">
@@ -28,7 +29,7 @@ function mapMarkup(ideas, selectedId) {
     const color = COLORS[index % COLORS.length];
     const rows = entries.map((idea) => `<button class="ib-row${idea.id === selectedId ? ' is-selected' : ''}" type="button" data-idea-id="${html(idea.id)}">
       <span class="ib-row-title">${html(idea.title)}</span>
-      <span class="ib-row-meta">${idea.source === 'link' ? 'LINK' : 'NOTIZ'} · ${html(relativeDate(idea.createdAt))}</span>
+      <span class="ib-row-meta">${sourceLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}</span>
     </button>`).join('');
     return `<div class="ib-group">
       <div class="ib-group-head"><span class="ib-group-dot" style="background:${color}"></span><b>${html(topic)}</b><span>${entries.length}</span></div>
@@ -45,10 +46,15 @@ function detailMarkup(idea) {
     : '';
   const actions = `<span class="ib-topline-meta"><span>${html(relativeDate(idea.createdAt))}</span>${sourceButton}` +
     `<button class="ib-icon-btn is-danger" type="button" data-idea-delete title="Gedanke löschen" aria-label="Gedanke löschen">✕</button></span>`;
-  return `<div class="ib-detail-topline"><span class="ib-source-badge">● ${idea.source === 'link' ? 'LINK' : 'NOTIZ'}</span>${actions}</div>
+  const text = idea.source === 'text' && idea.input
+    ? `<div class="ib-text-block"><div class="ib-text-head"><span class="ib-detail-label">WORTLAUT</span>` +
+      `<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button></div><pre>${html(idea.input)}</pre></div>`
+    : '';
+  return `<div class="ib-detail-topline"><span class="ib-source-badge">● ${sourceLabel(idea.source)}</span>${actions}</div>
     <h3>${html(idea.title)}</h3>
     <button class="ib-topic-pill" type="button" data-idea-topic>${html(idea.topic)} · ÄNDERN</button>
     <div class="ib-summary-block"><span class="ib-detail-label">AUF DEN PUNKT</span><p>${html(idea.summary)}</p></div>
+    ${text}
     <div class="ib-points-block"><span class="ib-detail-label">WAS HÄNGEN BLEIBT</span><ul>${points || '<li><span>Keine weiteren Punkte.</span></li>'}</ul></div>
     <div class="ib-keywords">${idea.keywords.map((word) => `#${html(word)}`).join(' ')}</div>
     <div class="ib-detail-footer"><span>${html(idea.engine)}</span><span>·</span><span>${html(new Date(idea.createdAt).toLocaleDateString('de-DE'))}</span></div>`;
@@ -58,8 +64,10 @@ export function initGedankenraum({ root, getToken }) {
   let ideas = [];
   let selectedId = null;
   let busy = false;
+  let keep = false;
   const captureInput = root.querySelector('[data-idea-input]');
   const captureButton = root.querySelector('[data-idea-capture]');
+  const keepToggle = root.querySelector('[data-idea-keep]');
   const typeLabel = root.querySelector('[data-idea-type]');
   const searchInput = root.querySelector('[data-idea-search]');
   const map = root.querySelector('[data-idea-map]');
@@ -89,7 +97,7 @@ export function initGedankenraum({ root, getToken }) {
   const visibleIdeas = () => {
     const query = searchInput.value.trim().toLocaleLowerCase('de-DE');
     if (!query) return ideas;
-    return ideas.filter((idea) => [idea.title, idea.summary, idea.topic, ...idea.keywords]
+    return ideas.filter((idea) => [idea.title, idea.summary, idea.topic, ...idea.keywords, idea.source === 'text' ? idea.input : '']
       .join(' ').toLocaleLowerCase('de-DE').includes(query));
   };
   const render = () => {
@@ -137,11 +145,11 @@ export function initGedankenraum({ root, getToken }) {
     captureButton.innerHTML = 'WIRD VERDICHTET <span class="ib-spinner">◌</span>';
     showMessage('');
     try {
-      const result = await post('/api/ideas/execute', { type: 'capture', input });
+      const result = await post('/api/ideas/execute', { type: 'capture', input, keep });
       ideas.unshift(result.idea);
       selectedId = result.idea.id;
       captureInput.value = '';
-      typeLabel.textContent = 'NOTIZ ODER LINK';
+      updateType();
       status.textContent = result.idea.engine;
       status.classList.toggle('is-fallback', result.idea.engine === 'Lokale Analyse');
       showMessage(result.warning);
@@ -155,9 +163,20 @@ export function initGedankenraum({ root, getToken }) {
     }
   };
 
+  const updateType = () => {
+    if (keep) typeLabel.textContent = 'TEXTNOTIZ · WORTGETREU';
+    else typeLabel.textContent = isLink(captureInput.value) ? 'LINK ERKANNT' : 'NOTIZ ODER LINK';
+  };
   captureInput.addEventListener('input', () => {
     captureButton.disabled = !captureInput.value.trim() || busy;
-    typeLabel.textContent = isLink(captureInput.value) ? 'LINK ERKANNT' : 'NOTIZ ODER LINK';
+    updateType();
+  });
+  keepToggle.addEventListener('click', () => {
+    keep = !keep;
+    keepToggle.setAttribute('aria-pressed', String(keep));
+    keepToggle.classList.toggle('is-active', keep);
+    updateType();
+    captureInput.focus();
   });
   captureInput.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') capture();
@@ -212,7 +231,12 @@ export function initGedankenraum({ root, getToken }) {
     const idea = selected();
     if (!idea) return;
     try {
-      if (event.target.closest?.('[data-idea-topic]')) {
+      if (event.target.closest?.('[data-idea-copy]')) {
+        const button = event.target.closest('[data-idea-copy]');
+        await navigator.clipboard.writeText(idea.input ?? '');
+        button.textContent = 'KOPIERT';
+        setTimeout(() => { button.textContent = 'KOPIEREN'; }, 1_500);
+      } else if (event.target.closest?.('[data-idea-topic]')) {
         const topic = window.prompt('Neues Thema', idea.topic)?.trim();
         if (!topic || topic === idea.topic) return;
         const result = await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
