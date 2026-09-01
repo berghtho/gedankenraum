@@ -28,6 +28,7 @@ body { min-height: 100vh; }
 .ib-menu-open { width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid rgba(236,235,227,.14);border-radius:8px;background:transparent;color:#a8aaa0;font-size:14px;line-height:1;cursor:pointer; }
 .ib-menu-open:hover,.ib-menu-open[aria-expanded="true"] { border-color:rgba(236,235,227,.4);color:var(--ib-paper); }
 .ib-menu-list { position:absolute;right:0;top:36px;z-index:5;min-width:180px;padding:6px;border:1px solid rgba(236,235,227,.14);border-radius:10px;background:#1b1c18;box-shadow:0 16px 40px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px; }
+.ib-menu-list[hidden] { display:none; }
 .ib-menu-list button { padding:8px 10px;border:0;border-radius:6px;background:transparent;color:#c9c9c0;font:500 9px Consolas,monospace;letter-spacing:.1em;text-align:left;cursor:pointer; }
 .ib-menu-list button:hover { background:rgba(255,255,255,.05); }
 .ib-menu-list button.is-danger { color:#ff8f8f; }
