@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
+import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
 
 const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
@@ -48,14 +49,22 @@ const emptyState = () => ({ version: 1, ideas: [] });
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+const mergeById = (current = [], incoming = []) => {
+  const known = new Set(current.map((item) => item.id));
+  return [...current, ...incoming.filter((item) => { if (known.has(item.id)) return false; known.add(item.id); return true; })];
+};
+const importedReflections = (items = []) => items.map((item) => item.status === 'pending'
+  ? { ...item, status: 'failed', error: 'Unfertige Auswertung importiert. Prüfe die Quellen und starte sie mit „Erneut versuchen“.' }
+  : item);
 
 export class IdeaBoard {
-  constructor({ path, analyze, readLink, now = () => new Date(), makeId = randomUUID }) {
+  constructor({ path, analyze, readLink, reflect = async () => { throw new Error('KI-Auswertung ist nicht verfügbar. Bitte Codex anmelden.'); }, now = () => new Date(), makeId = randomUUID }) {
     if (!path || typeof path !== 'string') throw new TypeError('IdeaBoard requires a state path');
     if (typeof analyze !== 'function') throw new TypeError('IdeaBoard requires an analyzer');
     if (typeof readLink !== 'function') throw new TypeError('IdeaBoard requires a link reader');
     this.path = path;
     this.analyze = analyze;
+    this.reflect = reflect;
     this.readLink = readLink;
     this.now = now;
     this.makeId = makeId;
@@ -67,11 +76,14 @@ export class IdeaBoard {
   }
 
   snapshot() {
-    const ideas = this.#read().ideas;
+    const state = this.#read();
+    const ideas = state.ideas;
     return {
       ideas: structuredClone(ideas.filter((idea) => !idea.deletedAt)),
       trash: structuredClone(ideas.filter((idea) => idea.deletedAt)),
       canUndo: this.history.length > 0,
+      rooms: structuredClone(state.rooms ?? []),
+      reflections: structuredClone(state.reflections ?? []),
     };
   }
 
@@ -79,7 +91,7 @@ export class IdeaBoard {
     return this.#enqueue(async () => {
       const before = this.#read();
       const result = await this.#execute(command);
-      if (command.type !== 'undo' && command.type !== 'retry') this.#remember(before, this.#read());
+      if (!['undo', 'retry', 'reflect', 'retryReflection'].includes(command.type)) this.#remember(before, this.#read());
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -105,6 +117,17 @@ export class IdeaBoard {
       throw new IdeaBoardValidationError('command must be an object');
     }
     if (command.type === 'capture') return this.#capture(command);
+    if (['roomCreate', 'roomRename', 'roomMembers', 'roomArchive', 'roomRestore'].includes(command.type)) return this.#roomCommand(command);
+    if (command.type === 'reflect') return this.#startReflection(command);
+    if (command.type === 'acceptReflection') return this.#acceptReflection(command);
+    if (command.type === 'retryReflection') {
+      const state = this.#read();
+      const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
+      if (!reflection || reflection.status !== 'failed') throw new IdeaBoardValidationError('Keine fehlgeschlagene Auswertung gefunden.');
+      reflection.status = 'pending'; reflection.error = null;
+      this.#write(state);
+      return { reflection: structuredClone(reflection) };
+    }
     if (command.type === 'retopic') return this.#retopic(command);
     if (command.type === 'retag') return this.#retag(command);
     if (command.type === 'renametag') return this.#renameTag(command);
@@ -135,6 +158,7 @@ export class IdeaBoard {
     }
 
     const state = this.#read();
+    const room = command.roomId ? this.#room(state, command.roomId) : null;
     const isLink = !keep && /^https?:\/\/\S+$/i.test(input);
     const parent = command.parentId ? this.#active(state, command.parentId) : null;
     const title = clean(command.title) || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
@@ -156,6 +180,7 @@ export class IdeaBoard {
       parentId: parent?.id ?? null, relations: [], notes: '',
     };
     state.ideas.unshift(idea);
+    if (room) { room.ideaIds = [...new Set([...room.ideaIds, idea.id])]; room.updatedAt = createdAt; }
     this.#write(state);
     return { idea: structuredClone(idea) };
   }
@@ -168,6 +193,12 @@ export class IdeaBoard {
       const fields = USER_FIELDS.filter((key) => !equal(previous[key], idea[key]));
       if (fields.length) patches.push({ id: idea.id, fields: fields.map((key) => ({ key, before: previous[key], after: idea[key] })) });
     }
+    for (const room of after.rooms ?? []) {
+      const previous = (before.rooms ?? []).find((item) => item.id === room.id);
+      if (!previous) { patches.push({ id: room.id, collection: 'rooms', captured: true }); continue; }
+      const fields = ['question', 'ideaIds', 'archivedAt'].filter((key) => !equal(previous[key], room[key]));
+      if (fields.length) patches.push({ id: room.id, collection: 'rooms', fields: fields.map((key) => ({ key, before: previous[key], after: room[key] })) });
+    }
     if (patches.length) this.history.push(structuredClone(patches));
     if (this.history.length > 50) this.history.shift();
   }
@@ -177,11 +208,11 @@ export class IdeaBoard {
     if (!patches) throw new IdeaBoardValidationError('Nichts zum Rückgängigmachen.');
     const state = this.#read();
     for (const patch of patches) {
-      const idea = state.ideas.find((item) => item.id === patch.id);
+      const idea = (state[patch.collection ?? 'ideas'] ?? []).find((item) => item.id === patch.id);
       if (!idea || patch.fields?.some((field) => !equal(idea[field.key], field.after))) {
         throw new IdeaBoardValidationError('Der Gedanke wurde inzwischen anderweitig geändert.');
       }
-      if (patch.captured) idea.deletedAt = this.now().toISOString();
+      if (patch.captured) idea[patch.collection === 'rooms' ? 'archivedAt' : 'deletedAt'] = this.now().toISOString();
       else for (const field of patch.fields) {
         if (field.before === undefined) delete idea[field.key];
         else idea[field.key] = structuredClone(field.before);
@@ -191,7 +222,7 @@ export class IdeaBoard {
     }
     this.#write(state);
     this.history.pop();
-    return { undone: true, focusId: patches[0].id };
+    return { undone: true, ...(patches[0].collection === 'rooms' ? { focusRoomId: patches[0].id } : { focusId: patches[0].id }) };
   }
 
   #queueIdea(idea) {
@@ -226,6 +257,8 @@ export class IdeaBoard {
     while (!this.stopped) {
       await this.pending;
       const state = this.#read();
+      const reflection = (state.reflections ?? []).find((item) => item.status === 'pending');
+      if (reflection) { await this.#analyzeReflection(reflection); continue; }
       const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending');
       if (!idea) return;
       const generation = this.generation;
@@ -271,6 +304,117 @@ export class IdeaBoard {
     const idea = state.ideas.find((item) => item.id === clean(id) && !item.deletedAt);
     if (!idea) throw new IdeaBoardValidationError('Gedanke wurde nicht gefunden.');
     return idea;
+  }
+
+  #room(state, id) {
+    const room = (state.rooms ?? []).find((item) => item.id === id && !item.archivedAt);
+    if (!room) throw new IdeaBoardValidationError('Arbeitsraum wurde nicht gefunden.');
+    return room;
+  }
+
+  #roomCommand(command) {
+    const state = this.#read();
+    state.rooms ??= [];
+    const stamp = this.now().toISOString();
+    let room;
+    if (command.type === 'roomCreate') {
+      const question = clean(command.question);
+      if (!question || question.length > 240) throw new IdeaBoardValidationError('Bitte eine Arbeitsfrage mit höchstens 240 Zeichen eingeben.');
+      room = { id: this.makeId(), question, ideaIds: [], createdAt: stamp, updatedAt: stamp };
+      state.rooms.push(room);
+    } else if (command.type === 'roomRestore') {
+      room = state.rooms.find((item) => item.id === command.id && item.archivedAt);
+      if (!room) throw new IdeaBoardValidationError('Archivierter Arbeitsraum wurde nicht gefunden.');
+      delete room.archivedAt;
+    } else {
+      room = this.#room(state, command.id);
+      if (command.type === 'roomRename') {
+        const question = clean(command.question);
+        if (!question || question.length > 240) throw new IdeaBoardValidationError('Bitte eine Arbeitsfrage mit höchstens 240 Zeichen eingeben.');
+        room.question = question;
+      } else if (command.type === 'roomArchive') room.archivedAt = stamp;
+      else {
+        const { add = [], remove = [] } = command;
+        if (![add, remove].every((ids) => Array.isArray(ids) && ids.every((id) => typeof id === 'string' && id.trim()))) throw new IdeaBoardValidationError('Ungültige Gedankenauswahl.');
+        for (const id of add) this.#active(state, id);
+        const excluded = new Set(remove);
+        room.ideaIds = [...new Set([...room.ideaIds, ...add])].filter((id) => !excluded.has(id));
+      }
+    }
+    room.updatedAt = stamp;
+    this.#write(state);
+    return { room: structuredClone(room) };
+  }
+
+  #startReflection(command) {
+    const state = this.#read();
+    if (!Object.hasOwn(REFLECTION_KINDS, command.kind)) throw new IdeaBoardValidationError('Unbekannte Auswertung.');
+    if (!Array.isArray(command.ideaIds) || command.ideaIds.some((id) => typeof id !== 'string')) throw new IdeaBoardValidationError('Bitte Gedanken auswählen.');
+    const ids = [...new Set(command.ideaIds)];
+    if (ids.length < 2 || ids.length > 12) throw new IdeaBoardValidationError('Bitte 2 bis 12 Gedanken auswählen.');
+    const ideas = ids.map((id) => this.#active(state, id));
+    const room = command.roomId ? this.#room(state, command.roomId) : null;
+    if (room && ids.some((id) => !room.ideaIds.includes(id))) throw new IdeaBoardValidationError('Die Auswahl gehört nicht vollständig zu diesem Arbeitsraum.');
+    state.reflections ??= [];
+    if (state.reflections.filter((item) => item.status === 'pending').length >= 5) throw new IdeaBoardValidationError('Es warten bereits fünf Auswertungen. Bitte kurz warten.');
+    const reflection = {
+      id: this.makeId(), roomId: room?.id ?? null, question: room?.question ?? '', kind: command.kind,
+      sources: reflectionSources(ideas), status: 'pending', summary: '', findings: [],
+      createdAt: this.now().toISOString(), engine: null, error: null,
+    };
+    state.reflections.unshift(reflection);
+    this.#write(state);
+    return { reflection: structuredClone(reflection) };
+  }
+
+  async #analyzeReflection(reflection) {
+    const generation = this.generation;
+    let result; let failure;
+    try {
+      const value = await this.reflect({ kind: reflection.kind, question: reflection.question, sources: reflection.sources });
+      result = { ...validateReflection(value, reflection.sources.map((source) => source.id), reflection.kind), engine: clean(value.engine, 'KI-Auswertung') };
+    } catch (error) { failure = error.message || 'KI-Auswertung fehlgeschlagen.'; }
+    await this.#enqueue(() => {
+      if (this.stopped || generation !== this.generation) return;
+      const state = this.#read();
+      const target = (state.reflections ?? []).find((item) => item.id === reflection.id && item.status === 'pending');
+      if (!target) return;
+      if (failure) { target.status = 'failed'; target.error = failure; }
+      else { Object.assign(target, result); target.status = 'ready'; target.error = null; }
+      this.#write(state);
+    });
+  }
+
+  #acceptReflection(command) {
+    const state = this.#read();
+    const reflection = (state.reflections ?? []).find((item) => item.id === command.id && item.status === 'ready');
+    const finding = reflection?.findings[command.index];
+    if (!Number.isInteger(command.index) || command.index < 0 || !finding) throw new IdeaBoardValidationError('Vorschlag wurde nicht gefunden.');
+    const existing = state.ideas.find((idea) => idea.reflectionOrigin?.id === reflection.id && idea.reflectionOrigin.index === command.index);
+    if (existing) {
+      if (existing.deletedAt) {
+        delete existing.deletedAt;
+        existing.updatedAt = this.now().toISOString();
+        const room = (state.rooms ?? []).find((item) => item.id === reflection.roomId && !item.archivedAt);
+        if (room && !room.ideaIds.includes(existing.id)) { room.ideaIds.push(existing.id); room.updatedAt = existing.updatedAt; }
+        this.#write(state);
+      }
+      return { idea: structuredClone(existing) };
+    }
+    const stamp = this.now().toISOString();
+    const idea = {
+      id: this.makeId(), title: clean(finding.text).slice(0, 160), summary: finding.text, input: finding.text,
+      source: 'text', url: null, notes: '', topic: 'Auswertungen', keyPoints: [], keywords: [], tags: [],
+      createdAt: stamp, updatedAt: stamp, analysisState: 'ready', engine: reflection.engine,
+      manualFields: ['title', 'summary', 'topic'], parentId: null,
+      reflectionOrigin: { id: reflection.id, index: command.index },
+      relations: finding.sourceIds.map((targetId) => ({ targetId, type: 'builds' })),
+    };
+    state.ideas.unshift(idea);
+    const room = (state.rooms ?? []).find((item) => item.id === reflection.roomId && !item.archivedAt);
+    if (room) { room.ideaIds.push(idea.id); room.updatedAt = stamp; }
+    this.#write(state);
+    return { idea: structuredClone(idea) };
   }
 
   #edit(command) {
@@ -406,8 +550,11 @@ export class IdeaBoard {
       const target = this.#readFrom(path);
       const currentIds = new Set(current.ideas.map((idea) => idea.id).filter((id) => typeof id === 'string'));
       state = {
+        ...target, ...current,
         version: 1,
         ideas: [...current.ideas, ...target.ideas.filter((idea) => !currentIds.has(idea.id))],
+        rooms: mergeById(current.rooms, target.rooms),
+        reflections: mergeById(current.reflections, importedReflections(target.reflections)),
       };
     }
     if (created || mode !== 'open') atomicReplaceText(path, `${JSON.stringify(state, null, 2)}\n`);
@@ -431,12 +578,15 @@ export class IdeaBoard {
       knownIds.add(idea.id);
       additions.push(idea);
     }
-    const state = { version: 1, ideas: [...current.ideas, ...additions] };
-    if (additions.length) this.#write(state);
+    const state = { ...current, version: 1, ideas: [...current.ideas, ...additions], rooms: mergeById(current.rooms, imported.rooms), reflections: mergeById(current.reflections, importedReflections(imported.reflections)) };
+    const importedRooms = state.rooms.length - (current.rooms?.length ?? 0);
+    const reflectionCount = state.reflections.length - (current.reflections?.length ?? 0);
+    if (additions.length || importedRooms || reflectionCount) this.#write(state);
     return {
       ...this.snapshot(),
       imported: additions.length,
       skipped,
+      importedRooms, importedReflections: reflectionCount,
     };
   }
 
@@ -469,6 +619,31 @@ export class IdeaBoard {
       if (idea.manualFields !== undefined && (!Array.isArray(idea.manualFields)
         || idea.manualFields.some((field) => !['title', 'summary', 'topic'].includes(field)))) {
         throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Bearbeitungsdaten.');
+      }
+    }
+    for (const key of ['rooms', 'reflections']) {
+      if (state[key] !== undefined && (!Array.isArray(state[key]) || state[key].some((item) => !item || typeof item.id !== 'string' || !item.id.trim()))) {
+        throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Arbeitsräume oder Auswertungen.');
+      }
+    }
+    for (const room of state.rooms ?? []) {
+      if (typeof room.question !== 'string' || !room.question.trim() || room.question.length > 240
+        || !Array.isArray(room.ideaIds) || room.ideaIds.some((id) => typeof id !== 'string' || !id.trim())) {
+        throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Arbeitsraum.');
+      }
+    }
+    for (const reflection of state.reflections ?? []) {
+      if (!Object.hasOwn(REFLECTION_KINDS, reflection.kind) || !['pending', 'ready', 'failed'].includes(reflection.status)
+        || typeof reflection.question !== 'string' || reflection.question.length > 240
+        || !Array.isArray(reflection.sources) || reflection.sources.length < 2 || reflection.sources.length > 12
+        || reflection.sources.some((source) => !source || typeof source.id !== 'string' || !source.id
+          || ['title', 'summary', 'input', 'notes'].some((key) => typeof source[key] !== 'string'))
+        || new Set(reflection.sources.map((source) => source.id)).size !== reflection.sources.length) {
+        throw new IdeaBoardValidationError('Die Datendatei enthält eine ungültige Auswertung.');
+      }
+      if (reflection.status === 'ready') {
+        try { validateReflection(reflection, reflection.sources.map((source) => source.id), reflection.kind); }
+        catch { throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Quellenverweise.'); }
       }
     }
   }
