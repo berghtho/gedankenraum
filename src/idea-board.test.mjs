@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 
+let sequence = 0;
 const makeBoard = (overrides = {}) => new IdeaBoard({
   path: join(mkdtempSync(join(tmpdir(), 'gedankenraum-')), 'ideas.json'),
   analyze: async ({ existingTopics }) => ({
@@ -20,21 +21,27 @@ const makeBoard = (overrides = {}) => new IdeaBoard({
   }),
   readLink: async (url) => ({ url, title: 'Beispiel', text: 'Nützlicher Seitentext.' }),
   now: () => new Date('2026-08-19T12:00:00.000Z'),
-  makeId: () => 'gedanke-1',
+  makeId: () => `gedanke-${++sequence}`,
   ...overrides,
 });
 
+async function captureAnalyzed(board, command) {
+  const result = await board.execute(command);
+  await board.whenIdle();
+  return { ...result, idea: board.snapshot().ideas.find((idea) => idea.id === result.idea.id) };
+}
+
 test('capture, retopic and delete use the durable board interface', async () => {
   const board = makeBoard();
-  const captured = await board.execute({ type: 'capture', input: 'Tiefe Module vereinfachen Aufrufer.' });
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Tiefe Module vereinfachen Aufrufer.' });
   assert.equal(captured.idea.topic, 'Architektur');
   assert.equal(captured.idea.engine, 'Testanalyse');
   assert.equal(board.snapshot().ideas.length, 1);
 
-  const changed = await board.execute({ type: 'retopic', id: 'gedanke-1', topic: 'Code Design' });
+  const changed = await board.execute({ type: 'retopic', id: captured.idea.id, topic: 'Code Design' });
   assert.equal(changed.idea.topic, 'Code Design');
-  const removed = await board.execute({ type: 'delete', id: 'gedanke-1' });
-  assert.equal(removed.idea.id, 'gedanke-1');
+  const removed = await board.execute({ type: 'delete', id: captured.idea.id });
+  assert.equal(removed.idea.id, captured.idea.id);
   assert.deepEqual(board.snapshot().ideas, []);
 });
 
@@ -46,7 +53,7 @@ test('a kept text note stays verbatim, keeps line breaks and is not read as a li
     analyze: async (request) => { seen = request; return { title: 'T', summary: 'S', keyPoints: [], keywords: [], topic: 'Agenten' }; },
   });
   const text = '  Erklärung:\r\n\r\n1. Erster   Punkt\n2. Zweiter Punkt\nhttps://example.com/quelle  ';
-  const captured = await board.execute({ type: 'capture', input: text, keep: true });
+  const captured = await captureAnalyzed(board, { type: 'capture', input: text, keep: true });
   assert.equal(captured.idea.source, 'text');
   assert.equal(captured.idea.input, 'Erklärung:\n\n1. Erster   Punkt\n2. Zweiter Punkt\nhttps://example.com/quelle');
   assert.equal(seen.source.kind, 'text');
@@ -66,7 +73,7 @@ test('text notes allow longer input than plain notes', async () => {
   await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep: true }), /60000/);
 });
 
-test('an unreadable link is neither analyzed nor persisted', async () => {
+test('an unreadable link stays saved with a retryable failure', async () => {
   const path = join(mkdtempSync(join(tmpdir(), 'gedankenraum-')), 'ideas.json');
   let analyzed = false;
   const board = makeBoard({
@@ -74,12 +81,12 @@ test('an unreadable link is neither analyzed nor persisted', async () => {
     readLink: async () => { throw new Error('offline'); },
     analyze: async () => { analyzed = true; return {}; },
   });
-  await assert.rejects(
-    () => board.execute({ type: 'capture', input: 'https://example.com/a' }),
-    /Link konnte nicht gelesen werden: offline/,
-  );
+  await board.execute({ type: 'capture', input: 'https://example.com/a' });
+  await board.whenIdle();
   assert.equal(analyzed, false);
-  assert.equal(existsSync(path), false);
+  assert.equal(existsSync(path), true);
+  assert.equal(board.snapshot().ideas[0].analysisState, 'failed');
+  assert.match(board.snapshot().ideas[0].analysisWarning, /offline/);
 });
 
 test('invalid and oversized commands are rejected', async () => {
@@ -103,12 +110,13 @@ test('concurrent captures serialize instead of losing a thought', async () => {
   const second = board.execute({ type: 'capture', input: 'second' });
   releaseFirst();
   await Promise.all([first, second]);
+  await board.whenIdle();
   assert.deepEqual(board.snapshot().ideas.map((idea) => idea.title), ['second', 'first']);
 });
 
 test('switching storage copies current data or opens an existing collection', async () => {
   const board = makeBoard();
-  await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  await captureAnalyzed(board, { type: 'capture', input: 'Aktuelle Sammlung' });
   const copiedPath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-copy-')), 'ideas.json');
 
   const copied = await board.switchStorage(copiedPath);
@@ -124,7 +132,7 @@ test('switching storage copies current data or opens an existing collection', as
 
 test('merging keeps both collections without duplicate ids and replacing overwrites the target', async () => {
   const board = makeBoard();
-  const captured = await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Aktuelle Sammlung' });
   const mergePath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-merge-')), 'ideas.json');
   writeFileSync(mergePath, `${JSON.stringify({
     version: 1,
@@ -144,7 +152,7 @@ test('merging keeps both collections without duplicate ids and replacing overwri
 
 test('importing merges into the current collection and skips duplicate ids', async () => {
   const board = makeBoard();
-  const captured = await board.execute({ type: 'capture', input: 'Aktuelle Sammlung' });
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Aktuelle Sammlung' });
   const imported = await board.importState({
     version: 1,
     ideas: [
@@ -162,7 +170,7 @@ test('importing merges into the current collection and skips duplicate ids', asy
 
 test('importing rejects unknown formats without changing the collection', async () => {
   const board = makeBoard();
-  await board.execute({ type: 'capture', input: 'Bleibt erhalten' });
+  await captureAnalyzed(board, { type: 'capture', input: 'Bleibt erhalten' });
   const before = readFileSync(board.path, 'utf8');
 
   await assert.rejects(() => board.importState({ version: 2, ideas: [] }), IdeaBoardValidationError);

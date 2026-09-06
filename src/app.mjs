@@ -1,4 +1,6 @@
 const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
+import { mindmapMarkup } from './mindmap.mjs';
+import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -47,6 +49,7 @@ const rowTags = (idea, { max = 3, compact = false } = {}) => {
 const rowMarkup = (idea, selectedId, { color = null, meta = null, compact = false } = {}) => `<button class="ib-row${idea.id === selectedId ? ' is-selected' : ''}" type="button" data-idea-id="${html(idea.id)}">
   ${color ? `<span class="ib-topic-dot" style="background:${color}"></span>` : ''}
   <span class="ib-row-title">${html(idea.title)}</span>
+  ${idea.analysisState === 'pending' ? '<span class="ib-analysis-badge">Analyse läuft …</span>' : idea.analysisState === 'failed' ? '<span class="ib-analysis-badge is-error">Analyse fehlgeschlagen</span>' : ''}
   ${rowTags(idea, { compact })}
   ${meta === null ? '' : `<span class="ib-row-meta">${html(meta)}</span>`}
 </button>`;
@@ -86,21 +89,6 @@ function timelineMarkup(ideas, selectedId, colorFor) {
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, { color: colorFor(idea.topic), meta: sourceLabel(idea.source) })).join('')}</div>
   </div>`).join('');
-}
-
-function treeMarkup(ideas, selectedId, colorFor, rootLabel) {
-  const groups = groupByTopic(ideas, colorFor);
-  const branches = groups.map(({ topic, entries, color }) => `<div class="ib-branch">
-    <div class="ib-tree-tick"></div>
-    <div class="ib-branch-node" data-idea-topic-filter="${html(topic)}" role="button" tabindex="0"><span class="ib-topic-dot" style="background:${color}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${entries.length}</span></div>
-    <div class="ib-tree-link${entries.length > 1 ? '' : ' is-single'}"></div>
-    <div class="ib-leaves">${entries.map((idea) => `<div class="ib-leaf"><div class="ib-tree-tick"></div>${rowMarkup(idea, selectedId, { compact: true })}</div>`).join('')}</div>
-  </div>`).join('');
-  return `<div class="ib-tree">
-    <div class="ib-tree-root"><div><span>SAMMLUNG</span><b>${html(rootLabel)}</b><i>${ideas.length} GEDANKEN</i></div></div>
-    <div class="ib-tree-link${groups.length > 1 ? '' : ' is-single'}"></div>
-    <div class="ib-tree-branches">${branches}</div>
-  </div>`;
 }
 
 function railMarkup(ideas, filter, colorFor) {
@@ -154,15 +142,16 @@ function relatedMarkup(idea, ideas, colorFor) {
 
 function detailMarkup(idea, ideas, colorFor, reading) {
   if (!idea) return '<div class="ib-no-selection"><p>Wähle einen Gedanken aus.</p></div>';
-  const paragraphs = idea.source === 'text' && idea.input ? paragraphsOf(idea) : [];
-  const points = idea.keyPoints.map((point, index) => `<li><b>0${index + 1}</b><span>${html(point)}</span></li>`).join('');
+  const paragraphs = idea.source !== 'link' && idea.input ? paragraphsOf(idea) : [];
+  const points = (idea.keyPoints ?? []).map((point, index) => `<li><b>0${index + 1}</b><span>${html(point)}</span></li>`).join('');
   const sourceButton = idea.url
     ? `<a class="ib-icon-btn" href="${html(idea.url)}" target="_blank" rel="noreferrer" title="Quelle öffnen" aria-label="Quelle öffnen">↗</a>`
     : '';
   const topline = `<div class="ib-detail-topline"><span>● ${sourceLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}</span>
     <span class="ib-topline-meta">${sourceButton}
+      <button class="ib-small-btn" type="button" data-edit-open>BEARBEITEN</button>
       <button class="ib-small-btn" type="button" data-idea-reading>${reading ? 'SCHLIESSEN ⤡' : 'LESEMODUS ⤢'}</button>
-      <button class="ib-icon-btn is-danger" type="button" data-idea-delete title="Gedanke löschen" aria-label="Gedanke löschen">✕</button></span></div>`;
+      <button class="ib-icon-btn is-danger" type="button" data-idea-delete title="In den Papierkorb" aria-label="In den Papierkorb">✕</button></span></div>`;
   const date = new Date(idea.createdAt).toLocaleDateString('de-DE');
   if (reading) {
     const body = (paragraphs.length ? paragraphs : [idea.summary]).map((part) => `<p>${html(part)}</p>`).join('');
@@ -182,6 +171,8 @@ function detailMarkup(idea, ideas, colorFor, reading) {
        <div class="ib-text-body">${paragraphs.map((part) => `<p>${html(part)}</p>`).join('')}</div>`
     : '';
   return `${topline}
+    ${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
+    ${idea.analysisWarning ? `<p class="ib-analysis-note is-error">${html(idea.analysisWarning)} ${idea.analysisState === 'failed' ? '<button class="ib-small-btn" type="button" data-analysis-retry>ERNEUT VERSUCHEN</button>' : ''}</p>` : ''}
     <h3>${html(idea.title)}</h3>
     <div class="ib-meta-grid">
       <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
@@ -190,12 +181,19 @@ function detailMarkup(idea, ideas, colorFor, reading) {
     </div>
     <p class="ib-summary">${html(idea.summary)}</p>
     ${text}
+    ${idea.notes ? `<section class="ib-own-notes"><span class="ib-detail-label">EIGENE ERGÄNZUNGEN</span><p>${html(idea.notes)}</p></section>` : ''}
     <div class="ib-points-block"><span class="ib-detail-label">WAS HÄNGEN BLEIBT</span><ul>${points || '<li><span>Keine weiteren Punkte.</span></li>'}</ul></div>
+    ${connectionsMarkup(idea, ideas)}
     ${relatedMarkup(idea, ideas, colorFor)}`;
 }
 
 export function initGedankenraum({ root, getToken }) {
   let ideas = [];
+  let trash = [];
+  let canUndo = false;
+  let mutationCount = 0;
+  let epoch = 0;
+  let pollTimer = null;
   let selectedId = null;
   let busy = false;
   let keep = false;
@@ -265,10 +263,13 @@ export function initGedankenraum({ root, getToken }) {
     const query = lower(parsed.text);
     return ideas.filter((idea) => (!tag || tagsOf(idea).some((candidate) => lower(candidate) === tag))
       && (!topic || lower(idea.topic).includes(topic))
-      && (!query || [idea.title, idea.summary, idea.topic, ...(idea.keywords ?? []), ...tagsOf(idea), idea.source === 'text' ? idea.input : '']
+      && (!query || [idea.title, idea.summary, idea.topic, ...(idea.keywords ?? []), ...tagsOf(idea), idea.input, idea.notes]
         .join(' ').toLocaleLowerCase('de-DE').includes(query)));
   };
   const render = () => {
+    const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
+    const viewport = q('[data-mm-viewport]');
+    const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
     filter.query = parseQuery(searchInput.value).text;
     const visible = visibleIdeas();
     const idea = selected();
@@ -277,17 +278,30 @@ export function initGedankenraum({ root, getToken }) {
     grid.classList.toggle('is-tree', view === 'tree' && !reading);
     for (const button of root.querySelectorAll('[data-idea-view]')) button.setAttribute('aria-pressed', String(button.dataset.ideaView === view));
     rail.innerHTML = railMarkup(ideas, filter, colorFor);
+    q('[data-undo]').disabled = !canUndo;
+    q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
     const groupCount = new Set(visible.map((candidate) => candidate.topic)).size;
     const hasFilter = !!(filter.tag || filter.topic || filter.query);
     let body;
-    if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0);
+    if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
+    else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0);
     else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor);
-    else if (view === 'tree') body = treeMarkup(visible, selectedId, colorFor, filter.tag ? `#${filter.tag}` : filter.topic ?? 'Alles');
     else body = listMarkup(visible, selectedId, colorFor);
     map.innerHTML = (ideas.length ? filterMarkup(filter, visible.length, groupCount) : '') + body;
     detail.innerHTML = detailMarkup(idea, ideas, colorFor, reading);
+    if (scroll && q('[data-mm-viewport]')) { q('[data-mm-viewport]').scrollLeft = scroll.left; q('[data-mm-viewport]').scrollTop = scroll.top; }
+    if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
+  };
+  const applySnapshot = (snapshot) => {
+    if (!Array.isArray(snapshot.ideas)) return;
+    ideas = snapshot.ideas;
+    trash = snapshot.trash ?? [];
+    canUndo = snapshot.canUndo ?? false;
+    if (!ideas.some((idea) => idea.id === selectedId)) selectedId = ideas[0]?.id ?? null;
   };
   const post = async (path, command = {}) => {
+    mutationCount += 1; epoch += 1;
+    try {
     const response = await fetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gedankenraum-token': await getToken() },
@@ -295,8 +309,35 @@ export function initGedankenraum({ root, getToken }) {
     });
     const payload = await response.json();
     if (!response.ok) throw Object.assign(new Error(payload.error ?? 'Aktion fehlgeschlagen.'), payload);
+    applySnapshot(payload);
     return payload;
+    } finally { mutationCount -= 1; epoch += 1; }
   };
+  const thinking = initThinkingTools({
+    root, snapshot: () => ({ ideas, trash, canUndo }), selected,
+    command: async (command) => {
+      const result = await post('/api/ideas/execute', command);
+      if (command.type === 'undo') {
+        if (ideas.some((idea) => idea.id === result.focusId)) selectedId = result.focusId;
+        showMessage('Letzte Änderung rückgängig gemacht.');
+      }
+      if (command.type === 'restore') showMessage('Gedanke wiederhergestellt.');
+      render(); return result;
+    },
+    render, notify: showMessage,
+    reveal: (id) => {
+      filter.tag = null; filter.topic = null; searchInput.value = ''; selectedId = id;
+      const visited = new Set();
+      let idea = selected();
+      while (idea?.parentId && !visited.has(idea.parentId)) {
+        visited.add(idea.parentId); thinking.mapState.collapsed.delete(idea.parentId);
+        idea = ideas.find((item) => item.id === idea.parentId);
+      }
+      render();
+      const node = [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id);
+      node?.focus({ preventScroll: true }); node?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    },
+  });
   const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   const setTags = async (idea, tags) => {
     const result = await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
@@ -333,27 +374,25 @@ export function initGedankenraum({ root, getToken }) {
     if (!input || busy) return;
     busy = true;
     captureButton.disabled = true;
-    captureButton.innerHTML = 'WIRD VERDICHTET <span class="ib-spinner">◌</span>';
+    captureButton.innerHTML = 'WIRD GESPEICHERT <span class="ib-spinner">◌</span>';
+    const submitted = captureInput.value;
     showMessage('');
     try {
       const result = await post('/api/ideas/execute', { type: 'capture', input, keep });
-      ideas.unshift(result.idea);
       selectedId = result.idea.id;
       reading = false;
       filter.tag = null; filter.topic = null; searchInput.value = '';
-      captureInput.value = '';
+      if (captureInput.value === submitted) captureInput.value = '';
       updateType();
-      status.textContent = result.idea.engine;
-      status.classList.toggle('is-fallback', result.idea.engine === 'Lokale Analyse');
-      const suggestions = suggestionsOf(result.idea).length;
-      showMessage(result.warning ?? `Eingeordnet unter „${result.idea.topic}“.${suggestions ? ` ${suggestions} Tag-Vorschl${suggestions === 1 ? 'ag' : 'äge'} im Detail prüfen.` : ''}`);
+      showMessage('Gespeichert. Du kannst gleich weiterschreiben.');
       render();
+      captureInput.focus();
     } catch (error) {
       showMessage(error.message, true);
     } finally {
       busy = false;
       captureButton.disabled = !captureInput.value.trim();
-      captureButton.innerHTML = 'EINSORTIEREN <span>→</span>';
+      captureButton.innerHTML = 'ABLEGEN <span>→</span>';
     }
   };
   const updateType = () => {
@@ -514,11 +553,11 @@ export function initGedankenraum({ root, getToken }) {
         replaceIdea(result.idea);
         render();
       } else if (target.closest?.('[data-idea-delete]')) {
-        if (!window.confirm(`Gedanke „${idea.title}“ endgültig löschen?`)) return;
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
         ideas = ideas.filter((item) => item.id !== idea.id);
         selectedId = ideas[0]?.id ?? null;
         reading = false;
+        showMessage('Im Papierkorb. Mit Rückgängig oder im Papierkorb wiederherstellen.');
         render();
       }
     } catch (error) {
@@ -602,17 +641,35 @@ export function initGedankenraum({ root, getToken }) {
     q(selector).addEventListener('click', () => storageDialog.close());
   }
 
+  const refresh = async () => {
+    const started = epoch;
+    try {
+      if (!mutationCount && !thinking.isInteracting() && !document.hidden) {
+        const response = await fetch('/api/ideas');
+        const next = await response.json();
+        if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
+        if (started === epoch && !mutationCount && !thinking.isInteracting()
+          && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo })) {
+          applySnapshot(next); render();
+        }
+      }
+    } catch { /* Keep locally displayed data and unsaved dialog input while offline. */ }
+    pollTimer = setTimeout(refresh, 1200);
+  };
+  window.addEventListener('pagehide', () => clearTimeout(pollTimer));
   return {
     async load() {
-      const [snapshotResponse, statusResponse] = await Promise.all([fetch('/api/ideas'), fetch('/api/ideas/status'), loadStorage()]);
+      const [snapshotResponse] = await Promise.all([fetch('/api/ideas'), loadStorage()]);
       const snapshot = await snapshotResponse.json();
-      const engine = await statusResponse.json();
       if (!snapshotResponse.ok) throw new Error(snapshot.error ?? 'Gedankenraum konnte nicht geladen werden.');
-      ideas = snapshot.ideas ?? [];
+      applySnapshot(snapshot);
       selectedId = ideas[0]?.id ?? null;
-      status.textContent = engine.engine;
-      status.classList.toggle('is-fallback', !engine.available);
       render();
+      pollTimer = setTimeout(refresh, 1200);
+      fetch('/api/ideas/status').then((response) => response.json()).then((engine) => {
+        status.textContent = engine.engine ?? 'Analyse nicht verfügbar';
+        status.classList.toggle('is-fallback', !engine.available);
+      }).catch(() => { status.textContent = 'Analyse nicht erreichbar'; });
     },
     render,
   };

@@ -145,3 +145,40 @@ test('the local HTTP interface serves, protects, persists and shuts down', async
     }
   }
 });
+
+test('HTTP capture returns persisted pending data while analysis waits; edits and trash remain usable', { timeout: 4000 }, async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const statePath = join(mkdtempSync(join(tmpdir(), 'gedankenraum-http-pending-')), 'ideas.json');
+  const app = createGedankenraumServer({
+    statePath, token: 'test',
+    analyzer: { status: async () => ({ available: true }), analyze: async () => { await gate; return { title: 'KI', summary: 'KI Text' }; } },
+  });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  app.setOrigin(origin);
+  const post = async (command) => {
+    const response = await fetch(`${origin}/api/ideas/execute`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test' }, body: JSON.stringify(command),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  try {
+    const captured = await post({ type: 'capture', input: 'Gedanke' });
+    assert.equal(captured.idea.analysisState, 'pending');
+    assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).ideas[0].input, 'Gedanke');
+    const edited = await post({ type: 'edit', id: captured.idea.id, fields: { title: 'Mein Titel' } });
+    assert.equal(edited.idea.title, 'Mein Titel');
+    const deleted = await post({ type: 'delete', id: captured.idea.id });
+    assert.equal(deleted.ideas.length, 0);
+    assert.equal(deleted.trash.length, 1);
+    const restored = await post({ type: 'undo' });
+    assert.equal(restored.ideas[0].title, 'Mein Titel');
+    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
+  } finally {
+    release();
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});

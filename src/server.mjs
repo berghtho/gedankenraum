@@ -168,6 +168,8 @@ export function createGedankenraumServer({
   const assets = new Map([
     ['/', { path: join(sourceHome, 'index.html'), type: 'text/html; charset=utf-8' }],
     ['/app.mjs', { path: join(sourceHome, 'app.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/mindmap.mjs', { path: join(sourceHome, 'mindmap.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/thinking-tools.mjs', { path: join(sourceHome, 'thinking-tools.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/style.css', { path: join(sourceHome, 'style.css'), type: 'text/css; charset=utf-8' }],
   ]);
 
@@ -272,6 +274,7 @@ export function createGedankenraumServer({
   });
 
   requestShutdown = async () => {
+    board.stop();
     await analyzer.stop?.();
     server.close();
   };
@@ -281,6 +284,7 @@ export function createGedankenraumServer({
     setOrigin(origin) {
       expectedOrigin = origin;
       expectedHost = new URL(origin).host;
+      board.resumeAnalysis();
     },
   };
 }
