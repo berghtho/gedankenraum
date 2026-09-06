@@ -16,7 +16,7 @@ export function connectionsMarkup(idea, ideas) {
   return `<section class="ib-related"><div class="ib-section-head"><span class="ib-detail-label">VERBINDUNGEN</span><button class="ib-small-btn" type="button" data-connect-open>+ VERBINDEN</button></div>${parent ? `<button class="ib-parent-link" type="button" data-related-open="${html(parent.id)}">Untergedanke von ${html(parent.title)}</button>` : ''}${rows.join('') || '<p class="ib-tools-note">Verknüpfe Gedanken auch über Themengrenzen hinweg.</p>'}</section>`;
 }
 
-export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify }) {
+export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify, openInline, newInline }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'ib-dialog ib-thinking-dialog';
   dialog.setAttribute('aria-labelledby', 'thinking-title');
@@ -43,6 +43,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
     q('[name="title"]').focus();
   };
   const openNew = (kind, idea = selected()) => {
+    if (newInline) { if (idea?.id) mapState.collapsed.delete(idea.id); return newInline(kind, idea); }
     mode = 'new';
     const parentId = kind === 'child' ? idea?.id : kind === 'sibling' ? idea?.parentId : null;
     editing = { parentId: parentId ?? null, topic: kind === 'root' ? null : idea?.topic };
@@ -166,7 +167,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
     if (!node || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     const idea = snapshot().ideas.find((item) => item.id === node.dataset.ideaId);
     if (event.key === 'Tab' || event.key === 'Enter') { event.preventDefault(); openNew(event.key === 'Tab' ? 'child' : 'sibling', idea); }
-    if (event.key === 'F2') { event.preventDefault(); openEdit(idea); }
+    if (event.key === 'F2') { event.preventDefault(); if (openInline) openInline(idea); else openEdit(idea); }
     if (event.key.startsWith('Arrow')) {
       const buttons = [...root.querySelectorAll('.ib-mm-select')];
       const direction = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
@@ -183,7 +184,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
   let pan = null;
   root.addEventListener('pointerdown', (event) => {
     const viewport = event.target.closest('[data-mm-viewport]');
-    if (!viewport || event.button !== 0) return;
+    if (!viewport || event.button !== 0 || event.target.closest('input, textarea, form')) return;
     const node = event.target.closest('[data-mm-id]');
     if (node) {
       if (event.target.closest('[data-mm-collapse]')) return;

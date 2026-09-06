@@ -5,13 +5,27 @@ verdichten, ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
 
 ## Gedanken weiterentwickeln
 
+Die Grundansicht lässt die Gedanken im Vordergrund. `Sammlung` öffnet Räume, Tags und Themen;
+Details erscheinen erst über `Öffnen`. Die Arbeitsfrage oben ist zugleich der Raumwähler.
+Die Ansichtsauswahl wechselt zwischen Gedanken, Mindmap und Zeitachse. Die Eingabe steht unten;
+Notizen bleiben automatisch im Wortlaut erhalten. `Links als Text aufbewahren` liegt im Menü.
+
+Ein Klick wählt einen Gedanken. `Weiterschreiben`, Doppelklick oder F2 öffnet einen Editor direkt
+in der Karte. Speichern mit Strg+Enter, Verwerfen mit Escape. Während eines Entwurfs bleiben
+Raum und Ansicht fest, damit der Text nicht aus dem Blick gerät. Weitere Felder lassen sich
+über `Öffnen` und `BEARBEITEN` ändern.
+
+Mehrere Gedanken lassen sich per Shift-Klick oder über `⋯ → Gedanken auswählen` markieren.
+Erst dann erscheinen Checkboxen und `Zusammen denken`. Die Auswertung öffnet eine Seitenansicht;
+die Eingabe bleibt bedienbar. Einordnung und Analysemetadaten sind im Detail eingeklappt.
+
 - **Sofort ablegen:** Erst wird der Gedanke gespeichert, dann laufen Linklesen und Analyse im Hintergrund. Du kannst sofort den nächsten Gedanken eingeben. Auch nicht erreichbare Links bleiben gespeichert und lassen sich erneut analysieren. Nach einem Neustart geht ausstehende Analyse weiter.
 - **Bearbeiten:** Titel, Text, Zusammenfassung und eigene Ergänzungen ändern. Selbst bearbeitete Titel, Zusammenfassungen und Themen werden von späteren Analysen nicht überschrieben. Änderungen am Ausgangstext stoßen eine neue Analyse an. Bei Links bleibt die URL als Quelle erhalten; eigene Texte gehören in die Ergänzungen.
-- **Rückgängig und Papierkorb:** `RÜCKGÄNGIG` oder Strg+Z außerhalb eines Textfelds nimmt die letzte Änderung zurück, bis zu 50 Schritte pro Server-Sitzung. Gelöschte Gedanken bleiben über das Menü im Papierkorb wiederherstellbar, auch nach einem Neustart. Untergedanken werden nicht mitgelöscht. Ein Speicherwechsel leert die Rückgängig-Historie.
+- **Rückgängig und Papierkorb:** `⋯ → Rückgängig` oder Strg+Z außerhalb eines Textfelds nimmt die letzte Änderung zurück, bis zu 50 Schritte pro Server-Sitzung. Gelöschte Gedanken bleiben über das Menü im Papierkorb wiederherstellbar, auch nach einem Neustart. Untergedanken werden nicht mitgelöscht. Ein Speicherwechsel leert die Rückgängig-Historie.
 - **Verbindungen:** Im Detail Gedanken mit „baut auf“, „widerspricht“ oder „Beispiel für“ verbinden. Verbindungen erscheinen an beiden Gedanken; die Pfeilrichtung zeigt, welcher Gedanke sich auf welchen bezieht. In der Mindmap werden die Verbindungen des ausgewählten Gedankens gestrichelt gezeigt.
-- **Mindmap:** Ein Knoten kann eigene Untergedanken haben. Auf einem fokussierten Knoten erzeugt Tab einen Untergedanken, Enter einen Nachbarn, F2 öffnet den Editor. Pfeiltasten wechseln den Fokus; Shift+Tab verlässt den Knoten rückwärts. Alle Erstellaktionen gibt es auch als Schaltflächen. Zweige per Ziehen auf einen anderen Knoten oder über `VERSCHIEBEN` umhängen, ein-/ausklappen und zoomen. Freie Fläche ziehen zum Schwenken. Beim Filtern erscheinen Gedanken mit ausgeblendeten Eltern eigenständig. Zoom und eingeklappte Zweige gelten für den geöffneten Tab.
+- **Mindmap:** Ein Knoten kann eigene Untergedanken haben. Auf einem fokussierten Knoten erzeugt Tab einen Untergedanken, Enter einen Nachbarn, F2 öffnet den Editor. Pfeiltasten wechseln den Fokus; Shift+Tab verlässt den Knoten rückwärts. Alle Erstellaktionen gibt es auch als Schaltflächen. Zweige per Ziehen auf einen anderen Knoten oder über `Mehr → Verschieben` umhängen, ein-/ausklappen und zoomen. Freie Fläche ziehen zum Schwenken. Beim Filtern erscheinen Gedanken mit ausgeblendeten Eltern eigenständig. Zoom und eingeklappte Zweige gelten für den geöffneten Tab.
 
-- **Arbeitsräume:** Eine eigene Frage hält zusammengehörige Gedanken zusammen. Gedanken auf einen Raum in der Seitenleiste ziehen, über `GEDANKEN HINZUFÜGEN` auswählen oder mehrere markierte Gedanken mit `IN RAUM` zuordnen. Ein Gedanke kann in mehreren Räumen liegen. Neue Gedanken landen im aktiven Raum. Entfernen ändert nur die Zuordnung; Räume lassen sich archivieren und wiederherstellen.
+- **Arbeitsräume:** Eine eigene Frage hält zusammengehörige Gedanken zusammen. Gedanken auf einen Raum in der Seitenleiste ziehen, über `Sammlung → Gedanken zuordnen` auswählen oder mehrere markierte Gedanken mit `In Raum …` zuordnen. Ein Gedanke kann in mehreren Räumen liegen. Neue Gedanken landen im aktiven Raum. Entfernen ändert nur die Zuordnung; Räume lassen sich archivieren und wiederherstellen.
 - **KI-Auswertungen:** 2 bis 12 Gedanken per Checkbox markieren und Gemeinsamkeiten, Widersprüche oder offene Fragen auswerten lassen. Die Arbeitsfrage und die verwendeten Textstände bleiben am Ergebnis gespeichert und anklickbar. Die Auswertung läuft im Hintergrund und setzt nach einem Neustart fort. Vorschläge verändern keine Originale. `ALS GEDANKEN ÜBERNEHMEN` speichert einen Vorschlag einmalig mit Quellenverbindungen im zugehörigen Raum.
 
 Die vorhandene Sammlung bleibt im Format `version: 1`. Hierarchie, Verbindungen, eigene Ergänzungen, Papierkorb, Räume und Auswertungen werden in derselben `ideas.json` gespeichert und beim Import mit übernommen. Alte Dateien ohne Räume oder Auswertungen bleiben kompatibel.
@@ -31,12 +45,12 @@ npm start
 
 ## Textnotizen aufbewahren
 
-Mit `TEXT AUFBEWAHREN` in der Erfassungsleiste wird die Eingabe wortgetreu gespeichert, inklusive
+Texteingaben werden automatisch wortgetreu gespeichert, inklusive
 Zeilenumbrüchen und bis zu 60.000 Zeichen. Das eignet sich für Texte, die später wieder nachgelesen
 werden sollen, etwa gute Erklärungen aus einer Agenten-Sitzung. Titel, Thema und Zusammenfassung werden
 trotzdem erzeugt, damit sich die Notiz einordnen und finden lässt. In der Detailansicht erscheint der
 vollständige Wortlaut mit `KOPIEREN`; die Suche durchsucht auch den Wortlaut. Links werden in diesem
-Modus nicht gelesen, sondern als Text übernommen.
+Fall über `⋯ → Links als Text aufbewahren` nicht gelesen, sondern als Text übernommen.
 
 ## Daten
 
@@ -46,7 +60,7 @@ Standardmäßig liegen alle Gedanken hier:
 %LOCALAPPDATA%\Gedankenraum\ideas.json
 ```
 
-Über `SPEICHER` oben rechts kann ein anderer lokaler Ordner gewählt werden, etwa ein synchronisierter
+Über `⋯ → SPEICHERORT` kann ein anderer lokaler Ordner gewählt werden, etwa ein synchronisierter
 OneDrive-Ordner. Ist dort bereits eine `ideas.json` vorhanden, fragt Gedankenraum, ob beide Sammlungen
 zusammengeführt oder die Zieldatei ersetzt werden soll. Ist noch keine vorhanden, wird die aktuelle
 Sammlung dorthin übernommen. Die Auswahl gilt auch nach einem Neustart.

@@ -46,12 +46,10 @@ export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) 
     links.push(`<path class="ib-mm-relation" marker-end="url(#mm-arrow)" d="M${x1},${y1} Q${(x1 + x2) / 2 + 80},${Math.max(y1, y2) + 48} ${x2},${y2}"><title>${escape(`${from.idea.title} ${relationLabels[relation.type]} ${to.idea.title}`)}</title></path>`);
   }
   return `<div class="ib-mm-toolbar" aria-label="Mindmap Werkzeuge">
-    <button type="button" data-mm-new="root">+ GEDANKE</button>
-    <button type="button" data-mm-new="child" ${selectedId ? '' : 'disabled'}>+ UNTERGEDANKE</button>
-    <button type="button" data-mm-new="sibling" ${selectedId ? '' : 'disabled'}>+ NACHBAR</button>
-    <button type="button" data-mm-move ${selectedId ? '' : 'disabled'}>VERSCHIEBEN</button>
+    <button type="button" data-mm-new="root">+ Gedanke</button>
+    ${selectedId ? '<button type="button" data-mm-new="child">+ Untergedanke</button><details class="ib-map-more"><summary>Mehr</summary><button type="button" data-mm-new="sibling">+ Nachbar</button><button type="button" data-mm-move>Verschieben</button></details>' : ''}
     <span class="ib-mm-zoom"><button type="button" data-mm-zoom="out" aria-label="Verkleinern">−</button><button type="button" data-mm-zoom="reset" title="Originalgröße">${Math.round(zoom * 100)}%</button><button type="button" data-mm-zoom="in" aria-label="Vergrößern">+</button></span>
-  </div><p class="ib-mm-hint">Knoten fokussieren: Tab = Untergedanke · Enter = Nachbar · F2 = Bearbeiten. Zweig auf einen Knoten ziehen zum Verschieben.</p>
+  </div>${selectedId ? '<p class="ib-mm-hint">Tab: Untergedanke · Enter: Nachbar · F2: Weiterschreiben</p>' : ''}
   <div class="ib-mm-viewport" data-mm-viewport tabindex="0" aria-label="Mindmap, freie Fläche ziehen zum Schwenken">
     <div class="ib-mm-size" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
       <div class="ib-mm-canvas" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
