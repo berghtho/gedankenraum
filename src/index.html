@@ -18,10 +18,12 @@
       <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Suchen · #tag · thema:"></label>
       <span class="ib-count" data-idea-count>0 VON 0</span>
       <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
+      <button class="ib-small-btn" type="button" data-undo disabled title="Letzte Änderung dieser Sitzung rückgängig machen · Strg+Z">↶ RÜCKGÄNGIG</button>
       <div class="ib-menu" data-menu>
         <button class="ib-menu-open" data-menu-open type="button" aria-haspopup="menu" aria-expanded="false" title="Import · Speicherort · Beenden">⋯</button>
         <div class="ib-menu-list" data-menu-list hidden role="menu">
           <button data-import-open type="button" role="menuitem">IMPORT ideas.json</button>
+          <button data-trash-open type="button" role="menuitem">PAPIERKORB</button>
           <button data-storage-open type="button" role="menuitem">SPEICHERORT</button>
           <button class="is-danger" data-stop type="button" role="menuitem">BEENDEN</button>
         </div>
@@ -38,7 +40,7 @@
       </label>
       <button class="ib-keep-toggle" data-idea-keep type="button" aria-pressed="false" title="Text wortgetreu aufbewahren, z. B. Erklärungen zum späteren Nachschlagen">TEXT AUFBEWAHREN</button>
       <span class="ib-capture-hint">Drag &amp; Drop · Strg + Enter</span>
-      <button data-idea-capture type="button" disabled>EINSORTIEREN <span>→</span></button>
+      <button data-idea-capture type="button" disabled>ABLEGEN <span>→</span></button>
     </div>
     <div class="ib-message" data-idea-message hidden></div>
     <div class="ib-grid" data-idea-grid>
