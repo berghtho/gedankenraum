@@ -161,7 +161,7 @@ export function createGedankenraumServer({
   storageConfigurable = !process.env.GEDANKENRAUM_HOME,
   selectDirectory = browseForDirectory,
 } = {}) {
-  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, readLink });
+  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, readLink });
   let expectedOrigin = null;
   let expectedHost = null;
   let requestShutdown = () => {};
@@ -170,6 +170,7 @@ export function createGedankenraumServer({
     ['/app.mjs', { path: join(sourceHome, 'app.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/mindmap.mjs', { path: join(sourceHome, 'mindmap.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/thinking-tools.mjs', { path: join(sourceHome, 'thinking-tools.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/workspace-ui.mjs', { path: join(sourceHome, 'workspace-ui.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/style.css', { path: join(sourceHome, 'style.css'), type: 'text/css; charset=utf-8' }],
   ]);
 

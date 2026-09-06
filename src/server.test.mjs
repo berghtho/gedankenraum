@@ -17,6 +17,39 @@ const statusWithHost = (port, host) => new Promise((resolve, reject) => {
   req.end();
 });
 
+test('authenticated HTTP room and reflection workflow persists sources and accepts one suggestion', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-reflection-http-'));
+  const local = createLocalAnalyzer();
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: {
+    ...local, reflect: async ({ sources }) => ({ summary: 'Vergleich', findings: [{ text: 'Gemeinsame Frage', sourceIds: sources.map((source) => source.id) }] }),
+  } });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+  const execute = async (command) => {
+    const response = await fetch(`${origin}/api/ideas/execute`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: JSON.stringify(command) });
+    assert.equal(response.status, 200); return response.json();
+  };
+  try {
+    assert.equal((await fetch(`${origin}/workspace-ui.mjs`)).status, 200);
+    const { room } = await execute({ type: 'roomCreate', question: 'Welche Steuerung?' });
+    const a = (await execute({ type: 'capture', input: 'Direkte Steuerung', roomId: room.id })).idea;
+    const b = (await execute({ type: 'capture', input: 'Automatische Steuerung', roomId: room.id })).idea;
+    const { reflection } = await execute({ type: 'reflect', kind: 'commonalities', ideaIds: [a.id, b.id], roomId: room.id });
+    let state;
+    for (let i = 0; i < 100; i++) {
+      state = await fetch(`${origin}/api/ideas`).then((response) => response.json());
+      if (state.reflections[0].status !== 'pending') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(state.reflections[0].status, 'ready');
+    const accepted = await execute({ type: 'acceptReflection', id: reflection.id, index: 0 });
+    assert.ok(accepted.rooms[0].ideaIds.includes(accepted.idea.id));
+    const again = await execute({ type: 'acceptReflection', id: reflection.id, index: 0 });
+    assert.equal(again.ideas.length, 3);
+    assert.equal(JSON.parse(readFileSync(join(directory, 'ideas.json'), 'utf8')).reflections[0].sources.length, 2);
+  } finally { await new Promise((resolve) => app.server.close(resolve)); }
+});
+
 test('Windows data lives below LOCALAPPDATA unless explicitly configured', () => {
   assert.equal(
     defaultStatePath({ LOCALAPPDATA: 'C:\\Users\\Test\\AppData\\Local' }, 'win32'),

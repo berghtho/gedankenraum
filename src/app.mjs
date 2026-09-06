@@ -1,6 +1,7 @@
 const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
 import { mindmapMarkup } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
+import { initWorkspaces } from './workspace-ui.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -54,7 +55,8 @@ const rowMarkup = (idea, selectedId, { color = null, meta = null, compact = fals
   ${meta === null ? '' : `<span class="ib-row-meta">${html(meta)}</span>`}
 </button>`;
 
-function emptyMarkup(hasFilter, hasIdeas) {
+function emptyMarkup(hasFilter, hasIdeas, room) {
+  if (room && !hasFilter) return `<div class="ib-empty-map"><div><span>DEIN ARBEITSRAUM</span><h3>Welche Gedanken helfen bei dieser Frage?</h3><p>Oben einen neuen Gedanken ablegen oder bestehende über „GEDANKEN HINZUFÜGEN“ auswählen.</p></div></div>`;
   if (!hasIdeas) return `<div class="ib-empty-map"><div><span>NOCH ZIEMLICH RUHIG HIER</span><h3>Der erste Gedanke macht den Anfang.</h3>
     <p>Oben einen Link oder eine kurze Notiz einwerfen. Gedankenraum ordnet den Rest.</p></div></div>`;
   return `<div class="ib-empty-map"><div><span>NICHTS GEFUNDEN</span><h3>Kein Gedanke passt zu diesem Filter.</h3>
@@ -190,6 +192,8 @@ function detailMarkup(idea, ideas, colorFor, reading) {
 export function initGedankenraum({ root, getToken }) {
   let ideas = [];
   let trash = [];
+  let rooms = [];
+  let reflections = [];
   let canUndo = false;
   let mutationCount = 0;
   let epoch = 0;
@@ -261,12 +265,13 @@ export function initGedankenraum({ root, getToken }) {
     const tag = lower(filter.tag ?? parsed.tag ?? '');
     const topic = lower(filter.topic ?? parsed.topic ?? '');
     const query = lower(parsed.text);
-    return ideas.filter((idea) => (!tag || tagsOf(idea).some((candidate) => lower(candidate) === tag))
+    return spaces.contextIdeas(ideas).filter((idea) => (!tag || tagsOf(idea).some((candidate) => lower(candidate) === tag))
       && (!topic || lower(idea.topic).includes(topic))
       && (!query || [idea.title, idea.summary, idea.topic, ...(idea.keywords ?? []), ...tagsOf(idea), idea.input, idea.notes]
         .join(' ').toLocaleLowerCase('de-DE').includes(query)));
   };
   const render = () => {
+    if (spaces.roomId() && !spaces.contextIdeas(ideas).some((idea) => idea.id === selectedId)) selectedId = spaces.contextIdeas(ideas)[0]?.id ?? null;
     const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
     const viewport = q('[data-mm-viewport]');
     const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
@@ -277,18 +282,19 @@ export function initGedankenraum({ root, getToken }) {
     grid.classList.toggle('is-reading', reading && !!idea);
     grid.classList.toggle('is-tree', view === 'tree' && !reading);
     for (const button of root.querySelectorAll('[data-idea-view]')) button.setAttribute('aria-pressed', String(button.dataset.ideaView === view));
-    rail.innerHTML = railMarkup(ideas, filter, colorFor);
+    rail.innerHTML = spaces.railMarkup() + railMarkup(spaces.contextIdeas(ideas), filter, colorFor);
     q('[data-undo]').disabled = !canUndo;
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
     const groupCount = new Set(visible.map((candidate) => candidate.topic)).size;
     const hasFilter = !!(filter.tag || filter.topic || filter.query);
     let body;
     if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
-    else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0);
+    else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, spaces.currentRoom());
     else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor);
     else body = listMarkup(visible, selectedId, colorFor);
     map.innerHTML = (ideas.length ? filterMarkup(filter, visible.length, groupCount) : '') + body;
     detail.innerHTML = detailMarkup(idea, ideas, colorFor, reading);
+    spaces.sync();
     if (scroll && q('[data-mm-viewport]')) { q('[data-mm-viewport]').scrollLeft = scroll.left; q('[data-mm-viewport]').scrollTop = scroll.top; }
     if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
   };
@@ -297,6 +303,8 @@ export function initGedankenraum({ root, getToken }) {
     ideas = snapshot.ideas;
     trash = snapshot.trash ?? [];
     canUndo = snapshot.canUndo ?? false;
+    rooms = snapshot.rooms ?? [];
+    reflections = snapshot.reflections ?? [];
     if (!ideas.some((idea) => idea.id === selectedId)) selectedId = ideas[0]?.id ?? null;
   };
   const post = async (path, command = {}) => {
@@ -313,19 +321,19 @@ export function initGedankenraum({ root, getToken }) {
     return payload;
     } finally { mutationCount -= 1; epoch += 1; }
   };
-  const thinking = initThinkingTools({
-    root, snapshot: () => ({ ideas, trash, canUndo }), selected,
-    command: async (command) => {
+  const runCommand = async (command) => {
+      if (command.type === 'capture' && !command.roomId && spaces.roomId()) command = { ...command, roomId: spaces.roomId() };
       const result = await post('/api/ideas/execute', command);
       if (command.type === 'undo') {
+        if (result.focusRoomId && rooms.some((room) => room.id === result.focusRoomId && !room.archivedAt)) spaces.chooseRoom(result.focusRoomId);
         if (ideas.some((idea) => idea.id === result.focusId)) selectedId = result.focusId;
         showMessage('Letzte Änderung rückgängig gemacht.');
       }
       if (command.type === 'restore') showMessage('Gedanke wiederhergestellt.');
       render(); return result;
-    },
-    render, notify: showMessage,
-    reveal: (id) => {
+  };
+  const reveal = (id) => {
+      if (spaces.roomId() && !spaces.currentRoom().ideaIds.includes(id)) spaces.reset();
       filter.tag = null; filter.topic = null; searchInput.value = ''; selectedId = id;
       const visited = new Set();
       let idea = selected();
@@ -336,7 +344,18 @@ export function initGedankenraum({ root, getToken }) {
       render();
       const node = [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id);
       node?.focus({ preventScroll: true }); node?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  const spaces = initWorkspaces({
+    root, snapshot: () => ({ ideas, trash, canUndo, rooms, reflections }), command: runCommand, render, reveal, selected,
+    visibleIds: () => visibleIdeas().map((idea) => idea.id),
+    changeContext: () => {
+      filter.tag = null; filter.topic = null; searchInput.value = ''; reading = false;
+      selectedId = spaces.contextIdeas(ideas)[0]?.id ?? null;
     },
+  });
+  const thinking = initThinkingTools({
+    root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
+    render, notify: showMessage, reveal,
   });
   const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   const setTags = async (idea, tags) => {
@@ -378,7 +397,7 @@ export function initGedankenraum({ root, getToken }) {
     const submitted = captureInput.value;
     showMessage('');
     try {
-      const result = await post('/api/ideas/execute', { type: 'capture', input, keep });
+      const result = await post('/api/ideas/execute', { type: 'capture', input, keep, roomId: spaces.roomId() });
       selectedId = result.idea.id;
       reading = false;
       filter.tag = null; filter.topic = null; searchInput.value = '';
@@ -447,7 +466,7 @@ export function initGedankenraum({ root, getToken }) {
       ideas = result.ideas;
       selectedId = ideas[0]?.id ?? null;
       const duplicates = result.skipped ? ` ${result.skipped} Duplikat${result.skipped === 1 ? '' : 'e'} übersprungen.` : '';
-      showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}`);
+      showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}${result.importedRooms ? ` ${result.importedRooms} Arbeitsräume übernommen.` : ''}${result.importedReflections ? ` ${result.importedReflections} Auswertungen übernommen.` : ''}`);
       render();
     } catch (error) {
       showMessage(error.message, true);
@@ -615,6 +634,7 @@ export function initGedankenraum({ root, getToken }) {
     showStorageMessage('Speicherort wird geprüft.');
     try {
       const result = await post('/api/storage', { directory: storageDirectory.value.trim(), ...(mode && { mode }) });
+      spaces.reset();
       ideas = result.ideas;
       selectedId = ideas[0]?.id ?? null;
       storageOpen.title = result.filePath;
@@ -644,12 +664,12 @@ export function initGedankenraum({ root, getToken }) {
   const refresh = async () => {
     const started = epoch;
     try {
-      if (!mutationCount && !thinking.isInteracting() && !document.hidden) {
+      if (!mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !document.hidden) {
         const response = await fetch('/api/ideas');
         const next = await response.json();
         if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
-        if (started === epoch && !mutationCount && !thinking.isInteracting()
-          && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo })) {
+        if (started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing()
+          && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo, rooms, reflections })) {
           applySnapshot(next); render();
         }
       }

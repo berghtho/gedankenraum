@@ -200,7 +200,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
       dragged.moved = true;
       dragged.node.classList.add('is-dragging');
       root.querySelector('.is-drop-target')?.classList.remove('is-drop-target');
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-mm-id]');
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-mm-id], [data-open-room]');
       if (target && target.dataset.mmId !== dragged.id) target.classList.add('is-drop-target');
       return;
     }
@@ -210,11 +210,13 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
   });
   root.addEventListener('pointerup', (event) => {
     if (dragged?.moved) {
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-mm-id]');
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-mm-id], [data-open-room]');
       const id = dragged.id;
       suppressClick = true;
       setTimeout(() => { suppressClick = false; }, 0);
-      if (target && target.dataset.mmId !== id) {
+      if (target?.dataset.openRoom) {
+        safely(() => command({ type: 'roomMembers', id: target.dataset.openRoom, add: [id] }));
+      } else if (target && target.dataset.mmId !== id) {
         const parentId = target.dataset.mmId;
         mapState.collapsed.delete(parentId);
         safely(() => command({ type: 'move', id, parentId }));

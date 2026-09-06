@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { createLocalAnalyzer } from './local-analysis.mjs';
+import { REFLECTION_SCHEMA, reflectionPrompt, validateReflection } from './reflection-analysis.mjs';
 
 const exec = promisify(execFile);
 const MODEL = 'gpt-5.6-luna';
@@ -113,13 +114,13 @@ export function codexArguments(schemaPath, outputPath) {
   ];
 }
 
-export async function executeCodex({ runtime, prompt, signal, timeoutMs = 5 * 60_000 }) {
+export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SCHEMA, timeoutMs = 5 * 60_000 }) {
   if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
   const home = await mkdtemp(join(tmpdir(), 'gedankenraum-codex-'));
   const schemaPath = join(home, 'schema.json');
   const outputPath = join(home, 'result.json');
   try {
-    await writeFile(schemaPath, JSON.stringify(RESULT_SCHEMA), 'utf8');
+    await writeFile(schemaPath, JSON.stringify(schema), 'utf8');
     if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
     const args = codexArguments(schemaPath, outputPath);
     await new Promise((resolveRun, rejectRun) => {
@@ -208,6 +209,17 @@ export function createCodexAnalyzer({
       } finally {
         active.delete(controller);
       }
+    },
+    async reflect(request) {
+      if (stopped) throw new Error('Gedankenraum wird beendet');
+      const controller = new AbortController();
+      active.add(controller);
+      try {
+        const resolvedRuntime = await runtime();
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const value = await execute({ runtime: resolvedRuntime, prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA, signal: controller.signal });
+        return { ...validateReflection(value, request.sources.map((source) => source.id), request.kind), engine: ENGINE };
+      } finally { active.delete(controller); }
     },
     async stop() {
       stopped = true;
