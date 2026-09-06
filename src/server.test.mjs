@@ -31,6 +31,7 @@ test('authenticated HTTP room and reflection workflow persists sources and accep
   };
   try {
     assert.equal((await fetch(`${origin}/workspace-ui.mjs`)).status, 200);
+    assert.equal((await fetch(`${origin}/inline-thought.mjs`)).status, 200);
     const { room } = await execute({ type: 'roomCreate', question: 'Welche Steuerung?' });
     const a = (await execute({ type: 'capture', input: 'Direkte Steuerung', roomId: room.id })).idea;
     const b = (await execute({ type: 'capture', input: 'Automatische Steuerung', roomId: room.id })).idea;
@@ -90,7 +91,7 @@ test('the local HTTP interface serves, protects, persists and shuts down', async
   try {
     const page = await fetch(origin);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /GEDANKENRAUM/);
+    assert.match(await page.text(), /<title>Gedankenraum<\/title>/);
 
     assert.equal(await statusWithHost(app.server.address().port, 'attacker.example'), 421);
 

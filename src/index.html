@@ -9,45 +9,44 @@
 <body>
   <main id="gedankenraum" class="idea-board">
     <header class="ib-topbar">
-      <div class="ib-brand"><span class="ib-brand-mark">G</span><span>GEDANKENRAUM</span></div>
-      <nav class="ib-views" data-idea-views aria-label="Ansicht">
-        <button type="button" data-idea-view="list" aria-pressed="true">LISTE</button>
-        <button type="button" data-idea-view="time" aria-pressed="false">ZEITACHSE</button>
-        <button type="button" data-idea-view="tree" aria-pressed="false">MINDMAP</button>
-      </nav>
-      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" placeholder="Suchen · #tag · thema:"></label>
-      <span class="ib-count" data-idea-count>0 VON 0</span>
-      <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
-      <button class="ib-small-btn" type="button" data-undo disabled title="Letzte Änderung dieser Sitzung rückgängig machen · Strg+Z">↶ RÜCKGÄNGIG</button>
+      <button class="ib-library-toggle" type="button" data-library-toggle aria-label="Sammlung" aria-expanded="false" aria-controls="idea-library">☰ <span>Sammlung</span></button>
+      <div class="ib-workspace-bar" data-workspace-bar></div>
+      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" aria-label="Gedanken suchen" placeholder="Suchen …"></label>
+      <select class="ib-view-select" data-view-select aria-label="Ansicht"><option value="list">Gedanken</option><option value="tree">Mindmap</option><option value="time">Zeitachse</option></select>
       <div class="ib-menu" data-menu>
         <button class="ib-menu-open" data-menu-open type="button" aria-haspopup="menu" aria-expanded="false" title="Import · Speicherort · Beenden">⋯</button>
         <div class="ib-menu-list" data-menu-list hidden role="menu">
+          <button data-selection-toggle type="button" role="menuitem">Gedanken auswählen</button>
+          <button data-results-open type="button" role="menuitem">Auswertungen</button>
+          <button data-undo type="button" role="menuitem" disabled>↶ Rückgängig</button>
+          <button data-idea-keep type="button" role="menuitemcheckbox" aria-checked="false">Links als Text aufbewahren</button>
           <button data-import-open type="button" role="menuitem">IMPORT ideas.json</button>
           <button data-trash-open type="button" role="menuitem">PAPIERKORB</button>
           <button data-storage-open type="button" role="menuitem">SPEICHERORT</button>
           <button class="is-danger" data-stop type="button" role="menuitem">BEENDEN</button>
+          <span class="ib-count" data-idea-count>0 VON 0</span>
+          <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
         </div>
       </div>
       <input data-import-file type="file" accept="application/json,.json" hidden>
     </header>
-    <div class="ib-capture-bar" data-idea-drop>
-      <span class="ib-capture-lede">
-        <span class="ib-capture-type" data-idea-type>NOTIZ ODER LINK</span>
-        <span class="ib-capture-title">Wohin mit dem guten Zeug?</span>
-      </span>
-      <label class="ib-capture-field">
-        <textarea data-idea-input maxlength="60000" rows="1" placeholder="Hier ablegen, einfügen oder lostippen …"></textarea>
-      </label>
-      <button class="ib-keep-toggle" data-idea-keep type="button" aria-pressed="false" title="Text wortgetreu aufbewahren, z. B. Erklärungen zum späteren Nachschlagen">TEXT AUFBEWAHREN</button>
-      <span class="ib-capture-hint">Drag &amp; Drop · Strg + Enter</span>
-      <button data-idea-capture type="button" disabled>ABLEGEN <span>→</span></button>
-    </div>
     <div class="ib-message" data-idea-message hidden></div>
-    <section class="ib-workspace-bar" data-workspace-bar aria-label="Arbeitsräume und KI-Auswahl"></section>
+    <section class="ib-context-bar" data-context-bar aria-label="Ausgewählte Gedanken" hidden></section>
     <div class="ib-grid" data-idea-grid>
-      <aside class="ib-rail" data-idea-rail></aside>
+      <aside class="ib-library" id="idea-library" data-library hidden aria-label="Sammlung">
+        <div class="ib-panel-head"><h2>Sammlung</h2><button type="button" data-library-toggle aria-label="Sammlung schließen">×</button></div>
+        <div data-room-tools></div><div class="ib-rail" data-idea-rail></div>
+      </aside>
       <div class="ib-list" data-idea-map></div>
-      <aside class="ib-detail" data-idea-detail><div class="ib-no-selection"><p>Gedankenraum wird geladen.</p></div></aside>
+      <aside class="ib-detail" data-idea-detail hidden aria-label="Gedanke"></aside>
+    </div>
+
+    <div class="ib-capture-bar" data-idea-drop>
+      <span class="ib-capture-type" data-idea-type hidden>NOTIZ ODER LINK</span>
+      <label class="ib-capture-field">
+        <textarea data-idea-input aria-label="Neuer Gedanke" maxlength="60000" rows="1" placeholder="Ein Gedanke, ein Link, ein Anfang …"></textarea>
+      </label>
+      <button data-idea-capture type="button" disabled title="Strg+Enter">Ablegen <span>↵</span></button>
     </div>
 
     <dialog class="ib-dialog ib-tag-dialog" data-tag-dialog aria-labelledby="tag-title">

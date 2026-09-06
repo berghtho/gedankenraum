@@ -2,6 +2,7 @@ const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.
 import { mindmapMarkup } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
+import { initInlineThought } from './inline-thought.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -47,36 +48,29 @@ const rowTags = (idea, { max = 3, compact = false } = {}) => {
   }
   return `<span class="ib-row-tags">${tags.slice(0, max).map(tagChip).join('')}${tags.length > max ? tagChip(`+${tags.length - max}`) : ''}</span>`;
 };
-const rowMarkup = (idea, selectedId, { color = null, meta = null, compact = false } = {}) => `<button class="ib-row${idea.id === selectedId ? ' is-selected' : ''}" type="button" data-idea-id="${html(idea.id)}">
+const excerptOf = (idea) => {
+  const text = (idea.source === 'link' ? idea.summary : idea.input || idea.summary) ?? '';
+  return (text.startsWith(idea.title) ? text.slice(idea.title.length).replace(/^[\s.!?:;]+/, '') : text).slice(0, 240);
+};
+const rowMarkup = (idea, selectedId, { color = null, meta = null, compact = false } = {}) => `<article class="ib-thought-card"><button class="ib-row${idea.id === selectedId ? ' is-selected' : ''}" type="button" data-idea-id="${html(idea.id)}" title="Doppelklick oder F2 zum Schreiben · Shift-Klick für Mehrfachauswahl">
   ${color ? `<span class="ib-topic-dot" style="background:${color}"></span>` : ''}
   <span class="ib-row-title">${html(idea.title)}</span>
+  ${excerptOf(idea) ? `<span class="ib-row-excerpt">${html(excerptOf(idea))}</span>` : ''}
   ${idea.analysisState === 'pending' ? '<span class="ib-analysis-badge">Analyse läuft …</span>' : idea.analysisState === 'failed' ? '<span class="ib-analysis-badge is-error">Analyse fehlgeschlagen</span>' : ''}
   ${rowTags(idea, { compact })}
   ${meta === null ? '' : `<span class="ib-row-meta">${html(meta)}</span>`}
-</button>`;
+</button></article>`;
 
 function emptyMarkup(hasFilter, hasIdeas, room) {
-  if (room && !hasFilter) return `<div class="ib-empty-map"><div><span>DEIN ARBEITSRAUM</span><h3>Welche Gedanken helfen bei dieser Frage?</h3><p>Oben einen neuen Gedanken ablegen oder bestehende über „GEDANKEN HINZUFÜGEN“ auswählen.</p></div></div>`;
+  if (room && !hasFilter) return `<div class="ib-empty-map"><div><span>DEIN ARBEITSRAUM</span><h3>Welche Gedanken helfen bei dieser Frage?</h3><p>Unten losschreiben. Bestehende Gedanken findest du unter „Sammlung“.</p></div></div>`;
   if (!hasIdeas) return `<div class="ib-empty-map"><div><span>NOCH ZIEMLICH RUHIG HIER</span><h3>Der erste Gedanke macht den Anfang.</h3>
-    <p>Oben einen Link oder eine kurze Notiz einwerfen. Gedankenraum ordnet den Rest.</p></div></div>`;
+    <p>Ein Satz reicht. Unten losschreiben oder einen Link ablegen.</p></div></div>`;
   return `<div class="ib-empty-map"><div><span>NICHTS GEFUNDEN</span><h3>Kein Gedanke passt zu diesem Filter.</h3>
     <p>${hasFilter ? 'Tag oder Thema abwählen, oder die Suche leeren.' : 'Die Suche liefert keine Treffer.'}</p></div></div>`;
 }
 
-function groupByTopic(ideas, colorFor) {
-  const grouped = new Map();
-  for (const idea of ideas) {
-    if (!grouped.has(idea.topic)) grouped.set(idea.topic, []);
-    grouped.get(idea.topic).push(idea);
-  }
-  return [...grouped].map(([topic, entries]) => ({ topic, entries, color: colorFor(topic) }));
-}
-
 function listMarkup(ideas, selectedId, colorFor) {
-  return groupByTopic(ideas, colorFor).map(({ topic, entries, color }) => `<div class="ib-group">
-    <div class="ib-group-head"><span class="ib-group-dot" style="background:${color}"></span><b>${html(topic)}</b><span>${entries.length}</span></div>
-    <div class="ib-group-rows">${entries.map((idea) => rowMarkup(idea, selectedId, { meta: `${sourceLabel(idea.source)} · ${relativeDate(idea.createdAt)}` })).join('')}</div>
-  </div>`).join('');
+  return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, { meta: relativeDate(idea.createdAt) })).join('')}</div>`;
 }
 
 function timelineMarkup(ideas, selectedId, colorFor) {
@@ -165,7 +159,7 @@ function detailMarkup(idea, ideas, colorFor, reading) {
         ${paragraphs.length ? '<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button>' : ''}
         <div class="ib-reading-foot">${html(idea.engine)}<br>${html(date)}</div>
       </div>
-      <article><h2>${html(idea.title)}</h2>${paragraphs.length ? `<p class="ib-reading-lede">${html(idea.summary)}</p>` : ''}<div class="ib-reading-body">${body}</div></article>
+      <article><h2>${html(idea.title)}</h2>${paragraphs.length ? `<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button><p class="ib-reading-lede">${html(idea.summary)}</p>` : ''}<div class="ib-reading-body">${body}</div></article>
     </div>`;
   }
   const text = paragraphs.length
@@ -176,11 +170,11 @@ function detailMarkup(idea, ideas, colorFor, reading) {
     ${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
     ${idea.analysisWarning ? `<p class="ib-analysis-note is-error">${html(idea.analysisWarning)} ${idea.analysisState === 'failed' ? '<button class="ib-small-btn" type="button" data-analysis-retry>ERNEUT VERSUCHEN</button>' : ''}</p>` : ''}
     <h3>${html(idea.title)}</h3>
-    <div class="ib-meta-grid">
+    <details class="ib-organize"><summary>Einordnen &amp; Analyse</summary><div class="ib-meta-grid">
       <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
       <span class="ib-detail-label">TAGS</span>${tagEditorMarkup(idea)}
       <span class="ib-detail-label">ANALYSE</span><span>${html(idea.engine)} · ${html(date)}</span>
-    </div>
+    </div></details>
     <p class="ib-summary">${html(idea.summary)}</p>
     ${text}
     ${idea.notes ? `<section class="ib-own-notes"><span class="ib-detail-label">EIGENE ERGÄNZUNGEN</span><p>${html(idea.notes)}</p></section>` : ''}
@@ -202,6 +196,10 @@ export function initGedankenraum({ root, getToken }) {
   let busy = false;
   let keep = false;
   let reading = false;
+  let detailOpen = false;
+  let libraryOpen = false;
+  let messageTimer = null;
+  let lastCardClick = null;
   let view = ['list', 'time', 'tree'].includes(localStorage.getItem(VIEW_KEY)) ? localStorage.getItem(VIEW_KEY) : 'list';
   const filter = { tag: null, topic: null, query: '' };
   let editingTag = null;
@@ -241,9 +239,11 @@ export function initGedankenraum({ root, getToken }) {
 
   const selected = () => ideas.find((idea) => idea.id === selectedId) ?? null;
   const showMessage = (text, error = false) => {
+    clearTimeout(messageTimer);
     message.textContent = text ?? '';
     message.classList.toggle('is-error', error);
     message.hidden = !text;
+    if (text && !error) messageTimer = setTimeout(() => { message.hidden = true; }, 3500);
   };
   const colorFor = (() => {
     const order = () => [...new Set(ideas.map((idea) => idea.topic))];
@@ -271,16 +271,23 @@ export function initGedankenraum({ root, getToken }) {
         .join(' ').toLocaleLowerCase('de-DE').includes(query)));
   };
   const render = () => {
-    if (spaces.roomId() && !spaces.contextIdeas(ideas).some((idea) => idea.id === selectedId)) selectedId = spaces.contextIdeas(ideas)[0]?.id ?? null;
+    if (spaces.roomId() && !spaces.contextIdeas(ideas).some((idea) => idea.id === selectedId)) selectedId = null;
     const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
     const viewport = q('[data-mm-viewport]');
     const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
     filter.query = parseQuery(searchInput.value).text;
     const visible = visibleIdeas();
+    if (!inline.isEditing() && !visible.some((idea) => idea.id === selectedId)) selectedId = null;
     const idea = selected();
     count.textContent = `${visible.length} VON ${ideas.length}`;
     grid.classList.toggle('is-reading', reading && !!idea);
     grid.classList.toggle('is-tree', view === 'tree' && !reading);
+    grid.classList.toggle('has-library', libraryOpen);
+    grid.classList.toggle('has-detail', detailOpen && !!idea);
+    q('[data-library]').hidden = !libraryOpen;
+    q('[data-library-toggle]').setAttribute('aria-expanded', String(libraryOpen));
+    q('[data-view-select]').value = view;
+    detail.hidden = !detailOpen || !idea;
     for (const button of root.querySelectorAll('[data-idea-view]')) button.setAttribute('aria-pressed', String(button.dataset.ideaView === view));
     rail.innerHTML = spaces.railMarkup() + railMarkup(spaces.contextIdeas(ideas), filter, colorFor);
     q('[data-undo]').disabled = !canUndo;
@@ -292,9 +299,10 @@ export function initGedankenraum({ root, getToken }) {
     else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, spaces.currentRoom());
     else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor);
     else body = listMarkup(visible, selectedId, colorFor);
-    map.innerHTML = (ideas.length ? filterMarkup(filter, visible.length, groupCount) : '') + body;
-    detail.innerHTML = detailMarkup(idea, ideas, colorFor, reading);
+    map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, groupCount) : '') + body;
+    detail.innerHTML = `<div class="ib-panel-head"><h2>Gedanke</h2><button type="button" data-detail-close aria-label="Gedanken schließen">×</button></div>` + detailMarkup(idea, ideas, colorFor, reading);
     spaces.sync();
+    inline.decorate();
     if (scroll && q('[data-mm-viewport]')) { q('[data-mm-viewport]').scrollLeft = scroll.left; q('[data-mm-viewport]').scrollTop = scroll.top; }
     if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
   };
@@ -305,7 +313,7 @@ export function initGedankenraum({ root, getToken }) {
     canUndo = snapshot.canUndo ?? false;
     rooms = snapshot.rooms ?? [];
     reflections = snapshot.reflections ?? [];
-    if (!ideas.some((idea) => idea.id === selectedId)) selectedId = ideas[0]?.id ?? null;
+    if (!ideas.some((idea) => idea.id === selectedId)) selectedId = null;
   };
   const post = async (path, command = {}) => {
     mutationCount += 1; epoch += 1;
@@ -332,9 +340,10 @@ export function initGedankenraum({ root, getToken }) {
       if (command.type === 'restore') showMessage('Gedanke wiederhergestellt.');
       render(); return result;
   };
-  const reveal = (id) => {
+  const reveal = (id, open = true) => {
       if (spaces.roomId() && !spaces.currentRoom().ideaIds.includes(id)) spaces.reset();
       filter.tag = null; filter.topic = null; searchInput.value = ''; selectedId = id;
+      detailOpen = open;
       const visited = new Set();
       let idea = selected();
       while (idea?.parentId && !visited.has(idea.parentId)) {
@@ -348,14 +357,18 @@ export function initGedankenraum({ root, getToken }) {
   const spaces = initWorkspaces({
     root, snapshot: () => ({ ideas, trash, canUndo, rooms, reflections }), command: runCommand, render, reveal, selected,
     visibleIds: () => visibleIdeas().map((idea) => idea.id),
+    canNavigate: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
+    openPanel: () => { detailOpen = false; render(); },
     changeContext: () => {
       filter.tag = null; filter.topic = null; searchInput.value = ''; reading = false;
-      selectedId = spaces.contextIdeas(ideas)[0]?.id ?? null;
+      selectedId = null; detailOpen = false;
     },
   });
+  const inline = initInlineThought({ root, command: runCommand, render, reveal, notify: showMessage, selected });
+  const editInline = (idea = selected()) => { detailOpen = false; spaces.closeResults(); inline.openEdit(idea); };
   const thinking = initThinkingTools({
     root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
-    render, notify: showMessage, reveal,
+    render, notify: showMessage, reveal, openInline: editInline, newInline: (kind, idea) => { detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
   });
   const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   const setTags = async (idea, tags) => {
@@ -364,7 +377,7 @@ export function initGedankenraum({ root, getToken }) {
     render();
   };
   const select = (id) => { selectedId = id; render(); };
-  const setView = (next) => { view = next; localStorage.setItem(VIEW_KEY, next); render(); };
+  const setView = (next) => { view = next; reading = false; localStorage.setItem(VIEW_KEY, next); render(); };
   const toggleFilter = (key, value) => { filter[key] = filter[key] === value ? null : value; render(); };
 
   const showStorageMessage = (text) => {
@@ -397,8 +410,8 @@ export function initGedankenraum({ root, getToken }) {
     const submitted = captureInput.value;
     showMessage('');
     try {
-      const result = await post('/api/ideas/execute', { type: 'capture', input, keep, roomId: spaces.roomId() });
-      selectedId = result.idea.id;
+      const result = await post('/api/ideas/execute', { type: 'capture', input, keep: keep || !isLink(input), roomId: spaces.roomId() });
+      selectedId = null; detailOpen = false;
       reading = false;
       filter.tag = null; filter.topic = null; searchInput.value = '';
       if (captureInput.value === submitted) captureInput.value = '';
@@ -411,11 +424,12 @@ export function initGedankenraum({ root, getToken }) {
     } finally {
       busy = false;
       captureButton.disabled = !captureInput.value.trim();
-      captureButton.innerHTML = 'ABLEGEN <span>→</span>';
+      captureButton.innerHTML = 'Ablegen <span>↵</span>';
     }
   };
   const updateType = () => {
-    if (keep) typeLabel.textContent = 'TEXTNOTIZ · WORTGETREU';
+    typeLabel.hidden = !keep || !isLink(captureInput.value);
+    if (keep) typeLabel.textContent = 'Link bleibt Text';
     else typeLabel.textContent = isLink(captureInput.value) ? 'LINK ERKANNT' : 'NOTIZ ODER LINK';
   };
 
@@ -425,7 +439,7 @@ export function initGedankenraum({ root, getToken }) {
   });
   keepToggle.addEventListener('click', () => {
     keep = !keep;
-    keepToggle.setAttribute('aria-pressed', String(keep));
+    keepToggle.setAttribute('aria-checked', String(keep));
     keepToggle.classList.toggle('is-active', keep);
     updateType();
     captureInput.focus();
@@ -435,6 +449,10 @@ export function initGedankenraum({ root, getToken }) {
   });
   captureButton.addEventListener('click', capture);
   searchInput.addEventListener('input', render);
+  q('[data-view-select]').addEventListener('change', (event) => {
+    if (inline.isEditing()) { event.target.value = view; inline.focus(); return; }
+    setView(event.target.value);
+  });
 
   const closeMenu = () => { menuList.hidden = true; menuOpen.setAttribute('aria-expanded', 'false'); };
   menuOpen.addEventListener('click', () => {
@@ -446,6 +464,7 @@ export function initGedankenraum({ root, getToken }) {
     if (event.key !== 'Escape') return;
     if (!menuList.hidden) closeMenu();
     else if (reading) { reading = false; render(); }
+    else if (!q('dialog[open]') && !inline.isEditing()) { detailOpen = false; libraryOpen = false; selectedId = null; spaces.clearSelection(); render(); }
   });
 
   importOpen.addEventListener('click', () => { closeMenu(); importFile.click(); });
@@ -526,6 +545,12 @@ export function initGedankenraum({ root, getToken }) {
 
   root.addEventListener('click', async (event) => {
     const target = event.target;
+    if (target.closest('[data-library-toggle]')) { libraryOpen = !libraryOpen; render(); return; }
+    if (target.closest('[data-detail-close]')) { detailOpen = false; reading = false; render(); q('[data-detail-open]')?.focus(); return; }
+    if (target.closest('[data-detail-open]')) { detailOpen = true; spaces.closeResults(); render(); q('[data-detail-close]')?.focus(); return; }
+    if (target.closest('[data-inline-edit]')) { editInline(); return; }
+    if (target.closest('[data-clear-focus]')) { selectedId = null; detailOpen = false; render(); return; }
+    if (target.closest('[data-inline-editor]')) return;
     const viewButton = target.closest?.('[data-idea-view]');
     if (viewButton) return setView(viewButton.dataset.ideaView);
     const clear = target.closest?.('[data-idea-filter-clear]');
@@ -547,7 +572,14 @@ export function initGedankenraum({ root, getToken }) {
     const topicFilter = target.closest?.('[data-idea-topic-filter]');
     if (topicFilter) return toggleFilter('topic', topicFilter.dataset.ideaTopicFilter);
     const row = target.closest?.('[data-idea-id]');
-    if (row) return select(row.dataset.ideaId);
+    if (row) {
+      if (inline.isEditing()) { inline.focus(); return; }
+      if (spaces.handlePick(row.dataset.ideaId, event)) return;
+      const doubleClick = event.detail > 0 && lastCardClick?.id === row.dataset.ideaId && event.timeStamp - lastCardClick.time < 400;
+      lastCardClick = { id: row.dataset.ideaId, time: event.timeStamp };
+      if (doubleClick) { selectedId = row.dataset.ideaId; editInline(); return; }
+      return select(row.dataset.ideaId);
+    }
     if (!idea) return;
     try {
       if (target.closest?.('[data-idea-reading]')) {
@@ -582,6 +614,15 @@ export function initGedankenraum({ root, getToken }) {
     } catch (error) {
       showMessage(error.message, true);
     }
+  });
+  menuList.addEventListener('click', (event) => { if (event.target.closest('button')) closeMenu(); });
+  root.addEventListener('dblclick', (event) => {
+    const row = event.target.closest('[data-idea-map] [data-idea-id]');
+    if (row && !spaces.isSelecting()) { selectedId = row.dataset.ideaId; editInline(); }
+  });
+  root.addEventListener('keydown', (event) => {
+    const row = event.target.closest('[data-idea-map] .ib-row');
+    if (row && event.key === 'F2') { event.preventDefault(); selectedId = row.dataset.ideaId; editInline(); }
   });
   root.addEventListener('keydown', (event) => {
     const node = event.target.closest?.('[data-idea-topic-filter][role="button"]');
@@ -664,11 +705,11 @@ export function initGedankenraum({ root, getToken }) {
   const refresh = async () => {
     const started = epoch;
     try {
-      if (!mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !document.hidden) {
+      if (!mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing() && !document.hidden) {
         const response = await fetch('/api/ideas');
         const next = await response.json();
         if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
-        if (started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing()
+        if (started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing()
           && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo, rooms, reflections })) {
           applySnapshot(next); render();
         }
@@ -683,7 +724,7 @@ export function initGedankenraum({ root, getToken }) {
       const snapshot = await snapshotResponse.json();
       if (!snapshotResponse.ok) throw new Error(snapshot.error ?? 'Gedankenraum konnte nicht geladen werden.');
       applySnapshot(snapshot);
-      selectedId = ideas[0]?.id ?? null;
+      selectedId = null;
       render();
       pollTimer = setTimeout(refresh, 1200);
       fetch('/api/ideas/status').then((response) => response.json()).then((engine) => {
