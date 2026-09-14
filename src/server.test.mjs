@@ -209,7 +209,7 @@ test('HTTP capture returns persisted pending data while analysis waits; edits an
     assert.equal(deleted.trash.length, 1);
     const restored = await post({ type: 'undo' });
     assert.equal(restored.ideas[0].title, 'Mein Titel');
-    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
+    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs', 'search.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
   } finally {
     release();
     app.server.closeAllConnections();

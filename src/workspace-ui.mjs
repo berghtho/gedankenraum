@@ -1,7 +1,7 @@
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const kinds = { commonalities: 'Gemeinsamkeiten', contradictions: 'Widersprüche', questions: 'Offene Fragen' };
 
-export function initWorkspaces({ root, snapshot, command, render, reveal, changeContext, visibleIds, selected, canNavigate = () => true, openPanel = () => {} }) {
+export function initWorkspaces({ root, snapshot, command, render, reveal, visibleIds, selected, canNavigate = () => true, openPanel = () => {} }) {
   let activeId = null;
   const picked = new Set();
   let mode = null;
@@ -12,6 +12,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
   let resultId = null;
   let draggedId = null;
   let selecting = false;
+  let barKey = '';
   const dialog = document.createElement('dialog');
   dialog.className = 'ib-dialog ib-workspace-dialog';
   dialog.setAttribute('aria-labelledby', 'workspace-dialog-title');
@@ -24,9 +25,11 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
   const q = (selector) => dialog.querySelector(selector);
   const currentRoom = () => snapshot().rooms.find((room) => room.id === activeId && !room.archivedAt) ?? null;
   const contextResults = () => snapshot().reflections.filter((item) => !activeId || item.roomId === activeId);
+  const closeResults = () => { resultsPanel.hidden = true; root.querySelector('[data-idea-grid]').classList.remove('has-results'); };
+  // Ein Raumwechsel ordnet nur neu: Suche, Filter und der geöffnete Gedanke bleiben erhalten.
   const chooseRoom = (id) => {
     if (!canNavigate()) return false;
-    activeId = id || null; picked.clear(); selecting = false; resultId = null; resultsPanel.hidden = true; changeContext(); render();
+    activeId = id || null; picked.clear(); selecting = false; resultId = null; closeResults(); render();
   };
   const shell = (title, body, action = '') => {
     dialog.innerHTML = `<form><div class="ib-dialog-head"><h2 id="workspace-dialog-title">${html(title)}</h2><button class="ib-dialog-close" type="button" data-workspace-close aria-label="Schließen">×</button></div>${body}<p class="ib-tools-error" role="alert" data-workspace-error></p><div class="ib-dialog-actions"><button type="button" data-workspace-close>SCHLIESSEN</button>${action ? `<button class="is-primary" type="submit">${html(action)}</button>` : ''}</div></form>`;
@@ -122,7 +125,6 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
   });
   root.addEventListener('change', (event) => {
     const target = event.target;
-    if (target.matches('[data-room-select]') && chooseRoom(target.value) === false) target.value = activeId ?? '';
     if (target.matches('[data-pick-id]')) {
       if (target.checked) picked.add(target.dataset.pickId); else picked.delete(target.dataset.pickId);
       const id = target.dataset.pickId; render();
@@ -158,23 +160,24 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
       mode = 'reflect';
       shell('Zusammen denken', `<p>${picked.size} Gedanken. Was möchtest du entdecken?</p><label class="ib-dialog-field"><span>Auswertung</span><select name="kind">${Object.entries(kinds).map(([id, name]) => `<option value="${id}">${html(name)}</option>`).join('')}</select></label><p class="ib-dialog-note">Die ausgewählten Texte werden an Codex übertragen. Ergebnisse bleiben Vorschläge.</p>`, 'Auswerten');
     }
-    if (target.closest('[data-results-close]')) { resultsPanel.hidden = true; root.querySelector('[data-idea-grid]').classList.remove('has-results'); root.querySelector('[data-reflection-open], [data-menu-open]')?.focus(); }
+    if (target.closest('[data-results-close]')) { closeResults(); root.querySelector('[data-reflection-open], [data-menu-open]')?.focus(); }
     if (target.closest('[data-workspace-close]')) dialog.close();
     if (target.closest('[data-room-new]')) editRoom();
     if (target.closest('[data-room-edit]')) editRoom(currentRoom());
     if (target.closest('[data-room-members]')) openMembers(currentRoom());
     if (target.closest('[data-room-archives]')) openArchive();
+    if (target.closest('[data-room-leave]')) chooseRoom(null);
     if (target.closest('[data-selection-add]')) openAddToRoom();
     if (target.closest('[data-pick-clear]')) { picked.clear(); selecting = false; render(); root.querySelector('[data-menu-open]').focus(); }
     if (target.closest('[data-pick-visible]')) { for (const id of visibleIds()) picked.add(id); render(); }
-    if (target.closest('[data-selection-remove]') && currentRoom()) safely(() => command({ type: 'roomMembers', id: activeId, remove: [...picked] }).then(() => { picked.clear(); render(); }));
+    if (target.closest('[data-selection-remove]') && currentRoom()) safely(() => command({ type: 'roomMembers', id: activeId, remove: [...picked].filter((id) => currentRoom().ideaIds.includes(id)) }).then(() => { picked.clear(); render(); }));
     if (target.closest('[data-results-open]')) { if (mode !== 'source' || !dialog.open) resultId = null; openResults(true); }
     const source = target.closest('[data-source-result]');
     if (source) openSource(source.dataset.sourceResult, source.dataset.sourceId);
     const provenance = target.closest('[data-provenance]');
     if (provenance) { resultId = provenance.dataset.provenance; openResults(true); }
     const live = target.closest('[data-source-live]');
-    if (live) { dialog.close(); activeId = null; reveal(live.dataset.sourceLive); }
+    if (live) { dialog.close(); reveal(live.dataset.sourceLive); }
     const roomButton = target.closest('[data-open-room]');
     if (roomButton) chooseRoom(roomButton.dataset.openRoom);
     if (target.closest('[data-room-archive]')) safely(async () => { await command({ type: 'roomArchive', id: editingId }); dialog.close(); chooseRoom(null); });
@@ -192,7 +195,8 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
     currentRoom,
     chooseRoom,
     clearSelection: () => { picked.clear(); selecting = false; },
-    closeResults: () => { resultsPanel.hidden = true; root.querySelector('[data-idea-grid]').classList.remove('has-results'); },
+    closeResults,
+    resultsOpen: () => !resultsPanel.hidden,
     isSelecting: () => selecting || picked.size > 0,
     handlePick(id, event) {
       if (!selecting && !event.shiftKey) return false;
@@ -202,22 +206,28 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
       render(); return true;
     },
     roomId: () => currentRoom()?.id ?? null,
-    reset: () => { activeId = null; picked.clear(); selecting = false; resultsPanel.hidden = true; },
+    reset: () => { activeId = null; picked.clear(); selecting = false; closeResults(); },
     contextIdeas: (ideas) => currentRoom() ? ideas.filter((idea) => currentRoom().ideaIds.includes(idea.id)) : ideas,
     isEditing: () => !!draggedId || (dialog.open && mode !== 'results'),
     railMarkup: () => `<div><div class="ib-rail-head">ARBEITSRÄUME</div><div class="ib-rail-items">${snapshot().rooms.filter((room) => !room.archivedAt).map((room) => `<div class="ib-rail-item${room.id === activeId ? ' is-active' : ''}"><button type="button" data-open-room="${html(room.id)}"><span class="ib-rail-name">${html(room.question)}</span><span class="ib-rail-n">${snapshot().ideas.filter((idea) => room.ideaIds.includes(idea.id)).length}</span></button></div>`).join('') || '<p class="ib-tools-note">Sammle Gedanken zu einer eigenen Frage.</p>'}</div></div>`,
     sync() {
       if (activeId && !currentRoom()) activeId = null;
-      for (const id of picked) if (!snapshot().ideas.some((idea) => idea.id === id) || (currentRoom() && !currentRoom().ideaIds.includes(id))) picked.delete(id);
+      for (const id of picked) if (!snapshot().ideas.some((idea) => idea.id === id)) picked.delete(id);
       const room = currentRoom();
       const rooms = snapshot().rooms.filter((item) => !item.archivedAt);
       const archived = snapshot().rooms.length - rooms.length;
       root.querySelector('[data-idea-grid]').classList.toggle('has-results', !resultsPanel.hidden);
-      root.querySelector('[data-workspace-bar]').innerHTML = rooms.length ? `<select data-room-select aria-label="Arbeitsraum"><option value="">Gedankenraum</option>${rooms.map((item) => `<option value="${html(item.id)}" ${item.id === activeId ? 'selected' : ''}>${html(item.question)}</option>`).join('')}</select>` : '<span class="ib-room-title">Gedankenraum</span>';
+      // Der aktive Raum steht als Titel; gewechselt wird in der Sammlung.
+      root.querySelector('[data-workspace-bar]').innerHTML = room
+        ? `<span class="ib-room-title is-room"><small>RAUM</small><span class="ib-room-name" title="${html(room.question)}">${html(room.question)}</span><button type="button" data-room-leave aria-label="Raum verlassen" title="Raum verlassen">×</button></span>`
+        : '<span class="ib-room-title">Gedankenraum</span>';
       root.querySelector('[data-room-tools]').innerHTML = `<button type="button" data-room-new>+ Arbeitsraum</button>${room ? '<button type="button" data-room-edit>Frage ändern</button><button type="button" data-room-members>Gedanken zuordnen</button>' : ''}${archived ? `<button type="button" data-room-archives>Archiv · ${archived}</button>` : ''}<button type="button" data-results-open>Auswertungen · ${contextResults().length}</button>`;
       const bar = root.querySelector('[data-context-bar]');
-      bar.hidden = !selecting && !picked.size && !selected();
-      bar.innerHTML = selecting || picked.size ? `<span>${picked.size} ausgewählt</span><button type="button" data-pick-visible>Alle sichtbaren</button>${picked.size && rooms.length ? '<button type="button" data-selection-add>In Raum …</button>' : ''}${picked.size && room ? '<button type="button" data-selection-remove>Aus Raum entfernen</button>' : ''}<button type="button" data-reflection-open ${picked.size < 2 || picked.size > 12 ? 'disabled' : ''}>Zusammen denken</button>${picked.size > 12 ? '<span>Bitte höchstens 12 Gedanken wählen.</span>' : ''}<button type="button" data-pick-clear aria-label="Auswahl beenden">×</button>` : '<span>Dein Gedanke</span><button type="button" data-inline-edit>Weiterschreiben</button><button type="button" data-detail-open>Öffnen</button><button type="button" data-selection-toggle>Mehrere auswählen</button><button type="button" data-clear-focus aria-label="Gedanke abwählen">×</button>';
+      bar.hidden = !selecting && !picked.size;
+      const members = room ? [...picked].filter((id) => room.ideaIds.includes(id)).length : 0;
+      const barMarkup = selecting || picked.size ? `<span>${picked.size} ausgewählt</span><button type="button" data-pick-visible>Alle sichtbaren</button>${picked.size && rooms.length ? '<button type="button" data-selection-add>In Raum …</button>' : ''}${members ? '<button type="button" data-selection-remove>Aus Raum entfernen</button>' : ''}<button type="button" data-reflection-open ${picked.size < 2 || picked.size > 12 ? 'disabled' : ''}>Zusammen denken</button>${picked.size > 12 ? '<span>Bitte höchstens 12 Gedanken wählen.</span>' : ''}<button type="button" data-pick-clear aria-label="Auswahl beenden">×</button>` : '';
+      // Die Leiste ist aria-live; nur bei Änderung neu setzen, sonst liest der Screenreader jeden Render vor.
+      if (barMarkup !== barKey) { barKey = barMarkup; bar.innerHTML = barMarkup; }
       for (const button of root.querySelectorAll('[data-idea-map] .ib-row, [data-idea-map] .ib-mm-select')) {
         if (button.classList.contains('ib-row')) button.draggable = true;
         const id = button.dataset.ideaId;
@@ -229,7 +239,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, change
         else { const wrapper = document.createElement('div'); wrapper.className = 'ib-selection-row'; button.before(wrapper); wrapper.append(label, button); }
       }
       const origin = selected()?.reflectionOrigin;
-      if (origin) root.querySelector('[data-idea-detail]').insertAdjacentHTML('afterbegin', `<p class="ib-provenance">Übernommener KI-Vorschlag <button type="button" data-provenance="${html(origin.id)}">QUELLENSTAND ANSEHEN</button></p>`);
+      if (origin) root.querySelector('[data-idea-detail] .ib-panel-head')?.insertAdjacentHTML('afterend', `<p class="ib-provenance">Übernommener KI-Vorschlag <button type="button" data-provenance="${html(origin.id)}">QUELLENSTAND ANSEHEN</button></p>`);
       if (!resultsPanel.hidden && mode === 'results') openResults();
     },
   };

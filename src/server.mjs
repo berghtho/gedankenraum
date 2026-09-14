@@ -172,6 +172,7 @@ export function createGedankenraumServer({
     ['/thinking-tools.mjs', { path: join(sourceHome, 'thinking-tools.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/workspace-ui.mjs', { path: join(sourceHome, 'workspace-ui.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/inline-thought.mjs', { path: join(sourceHome, 'inline-thought.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/search.mjs', { path: join(sourceHome, 'search.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/style.css', { path: join(sourceHome, 'style.css'), type: 'text/css; charset=utf-8' }],
   ]);
 
