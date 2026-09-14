@@ -11,10 +11,11 @@
     <header class="ib-topbar">
       <button class="ib-library-toggle" type="button" data-library-toggle aria-label="Sammlung" aria-expanded="false" aria-controls="idea-library">☰ <span>Sammlung</span></button>
       <div class="ib-workspace-bar" data-workspace-bar></div>
-      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" aria-label="Gedanken suchen" placeholder="Suchen …"></label>
+      <label class="ib-search"><span aria-hidden="true">⌕</span><input data-idea-search type="search" aria-label="Gedanken suchen" placeholder="Suchen … ( / )" autocomplete="off"></label>
+      <span class="ib-sr-only" role="status" data-search-status></span>
       <select class="ib-view-select" data-view-select aria-label="Ansicht"><option value="list">Gedanken</option><option value="tree">Mindmap</option><option value="time">Zeitachse</option></select>
       <div class="ib-menu" data-menu>
-        <button class="ib-menu-open" data-menu-open type="button" aria-haspopup="menu" aria-expanded="false" title="Import · Speicherort · Beenden">⋯</button>
+        <button class="ib-menu-open" data-menu-open type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Menü">⋯</button>
         <div class="ib-menu-list" data-menu-list hidden role="menu">
           <button data-selection-toggle type="button" role="menuitem">Gedanken auswählen</button>
           <button data-results-open type="button" role="menuitem">Auswertungen</button>
@@ -24,14 +25,23 @@
           <button data-trash-open type="button" role="menuitem">PAPIERKORB</button>
           <button data-storage-open type="button" role="menuitem">SPEICHERORT</button>
           <button class="is-danger" data-stop type="button" role="menuitem">BEENDEN</button>
+          <span class="ib-keys">/ Suchen · n Schreiben · F2 Weiterschreiben · Esc Schließen</span>
           <span class="ib-count" data-idea-count>0 VON 0</span>
           <div class="ib-engine" data-idea-status>Analyse wird geprüft</div>
         </div>
       </div>
       <input data-import-file type="file" accept="application/json,.json" hidden>
     </header>
-    <div class="ib-message" data-idea-message hidden></div>
-    <section class="ib-context-bar" data-context-bar aria-label="Ausgewählte Gedanken" hidden></section>
+
+    <div class="ib-capture-bar" data-idea-drop>
+      <span class="ib-capture-type" data-idea-type hidden>NOTIZ ODER LINK</span>
+      <label class="ib-capture-field">
+        <textarea data-idea-input aria-label="Neuer Gedanke" maxlength="60000" rows="1" placeholder="Ein Gedanke, ein Link, ein Anfang … ( n )"></textarea>
+      </label>
+      <button data-idea-capture type="button" disabled title="Strg+Enter">Ablegen <span>↵</span></button>
+    </div>
+
+    <div class="ib-message" data-idea-message role="status" aria-live="polite" hidden></div>
     <div class="ib-grid" data-idea-grid>
       <aside class="ib-library" id="idea-library" data-library hidden aria-label="Sammlung">
         <div class="ib-panel-head"><h2>Sammlung</h2><button type="button" data-library-toggle aria-label="Sammlung schließen">×</button></div>
@@ -39,14 +49,7 @@
       </aside>
       <div class="ib-list" data-idea-map></div>
       <aside class="ib-detail" data-idea-detail hidden aria-label="Gedanke"></aside>
-    </div>
-
-    <div class="ib-capture-bar" data-idea-drop>
-      <span class="ib-capture-type" data-idea-type hidden>NOTIZ ODER LINK</span>
-      <label class="ib-capture-field">
-        <textarea data-idea-input aria-label="Neuer Gedanke" maxlength="60000" rows="1" placeholder="Ein Gedanke, ein Link, ein Anfang …"></textarea>
-      </label>
-      <button data-idea-capture type="button" disabled title="Strg+Enter">Ablegen <span>↵</span></button>
+      <section class="ib-context-bar" data-context-bar aria-label="Ausgewählte Gedanken" aria-live="polite" hidden></section>
     </div>
 
     <dialog class="ib-dialog ib-tag-dialog" data-tag-dialog aria-labelledby="tag-title">

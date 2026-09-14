@@ -1,14 +1,17 @@
 const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
-import { mindmapMarkup } from './mindmap.mjs';
+import { mindmapMarkup, relationLabels } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
 const VIEW_KEY = 'gedankenraum.view';
+const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
 const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
+const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
 const relativeDate = (value) => {
   const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60_000);
@@ -31,49 +34,84 @@ const dayLabel = (value) => {
 
 const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
 const sourceLabel = (source) => ({ link: 'LINK', text: 'TEXT' })[source] ?? 'NOTIZ';
+const kindLabel = (source) => (source === 'link' ? 'LINK' : 'NOTIZ');
 const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 const suggestionsOf = (idea) => {
   const have = new Set(tagsOf(idea).map(lower));
   return (idea.keywords ?? []).filter((word) => !have.has(lower(word)));
 };
 const paragraphsOf = (idea) => (idea.input ?? '').split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+// Der Wortlaut ohne Titelzeile wird je Gedanke nur einmal gefaltet; jeder Snapshot bringt neue Objekte.
+const bodyCache = new WeakMap();
+const bodyInfoOf = (idea) => {
+  let info = bodyCache.get(idea);
+  if (!info) {
+    const text = (idea.source === 'link' ? idea.summary ?? '' : stripTitle(idea.input ?? '', idea.title)).replace(/\s+/g, ' ').trim();
+    info = { text, map: foldMap(text) };
+    bodyCache.set(idea, info);
+  }
+  return info;
+};
+const excerptOf = (idea) => windowAround(bodyInfoOf(idea).text || idea.summary || '', null, { length: 200 }).text;
+const anyHit = (text, terms) => terms.some((variants) => variants.some((variant) => fold(text).includes(variant)));
+const focusKeyOf = (node) => [node.tagName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') || attr.name === 'name').map((attr) => `${attr.name}=${attr.value}`), node.textContent.trim().slice(0, 40)].join('|');
 
-const tagChip = (tag) => `<span class="ib-tag">#${html(tag)}</span>`;
-const rowTags = (idea, { max = 3, compact = false } = {}) => {
+// Bei einer Suche zeigt die Karte die Stelle, an der es passt, statt immer den Anfang.
+function snippetOf(idea, terms) {
+  if (!terms.length) return { text: excerptOf(idea), hint: '', hit: false };
+  const body = bodyInfoOf(idea);
+  const [bodyHit] = hitsInMap(body.map, terms, 1);
+  if (bodyHit) return { text: windowAround(body.text, bodyHit).text, hint: '', hit: true };
+  for (const [text, hint] of [[idea.notes, 'Treffer in Ergänzung'], [idea.summary, 'Treffer in Zusammenfassung']]) {
+    if (!text) continue;
+    const collapsed = text.replace(/\s+/g, ' ').trim();
+    const [hit] = hitsIn(collapsed, terms, 1);
+    if (hit) return { text: windowAround(collapsed, hit).text, hint, hit: true };
+  }
+  const tag = tagsOf(idea).find((candidate) => anyHit(candidate, terms));
+  const keyword = tag ? null : (idea.keywords ?? []).find((candidate) => anyHit(candidate, terms));
+  const hint = tag ? `Treffer in Tag #${tag}` : keyword ? `Treffer in Schlagwort „${keyword}“` : anyHit(idea.topic, terms) ? `Treffer in Thema „${idea.topic}“` : '';
+  return { text: excerptOf(idea), hint, hit: false };
+}
+
+const rowTags = (idea) => {
   const tags = tagsOf(idea);
   if (!tags.length) return '';
-  if (compact) {
-    const rest = tags.length > 1 ? ` +${tags.length - 1}` : '';
-    return `<span class="ib-row-meta" title="${html(tags.map((tag) => `#${tag}`).join(' '))}">#${html(tags[0])}${rest}</span>`;
-  }
-  return `<span class="ib-row-tags">${tags.slice(0, max).map(tagChip).join('')}${tags.length > max ? tagChip(`+${tags.length - max}`) : ''}</span>`;
+  const rest = tags.length > 1 ? ` +${tags.length - 1}` : '';
+  return `<span class="ib-row-meta" title="${html(tags.map((tag) => `#${tag}`).join(' '))}">#${html(tags[0])}${rest}</span>`;
 };
-const excerptOf = (idea) => {
-  const text = (idea.source === 'link' ? idea.summary : idea.input || idea.summary) ?? '';
-  return (text.startsWith(idea.title) ? text.slice(idea.title.length).replace(/^[\s.!?:;]+/, '') : text).slice(0, 240);
-};
-const rowMarkup = (idea, selectedId, { color = null, meta = null, compact = false } = {}) => `<article class="ib-thought-card"><button class="ib-row${idea.id === selectedId ? ' is-selected' : ''}" type="button" data-idea-id="${html(idea.id)}" title="Doppelklick oder F2 zum Schreiben · Shift-Klick für Mehrfachauswahl">
+const rowMarkup = (idea, selectedId, { color = null, meta = null, terms = [], tags = false } = {}) => {
+  const snippet = snippetOf(idea, terms);
+  const selected = idea.id === selectedId;
+  return `<article class="ib-thought-card"><button class="ib-row${selected ? ' is-selected' : ''}${snippet.hit ? ' has-hit' : ''}" type="button" data-idea-id="${html(idea.id)}"${selected ? ' aria-current="true"' : ''}>
   ${color ? `<span class="ib-topic-dot" style="background:${color}"></span>` : ''}
-  <span class="ib-row-title">${html(idea.title)}</span>
-  ${excerptOf(idea) ? `<span class="ib-row-excerpt">${html(excerptOf(idea))}</span>` : ''}
+  <span class="ib-row-title">${markText(idea.title, terms, html)}</span>
+  ${snippet.text ? `<span class="ib-row-excerpt">${markText(snippet.text, terms, html)}</span>` : ''}
+  ${snippet.hint ? `<span class="ib-row-hint">${html(snippet.hint)}</span>` : ''}
   ${idea.analysisState === 'pending' ? '<span class="ib-analysis-badge">Analyse läuft …</span>' : idea.analysisState === 'failed' ? '<span class="ib-analysis-badge is-error">Analyse fehlgeschlagen</span>' : ''}
-  ${rowTags(idea, { compact })}
+  ${tags ? rowTags(idea) : ''}
   ${meta === null ? '' : `<span class="ib-row-meta">${html(meta)}</span>`}
 </button></article>`;
+};
 
-function emptyMarkup(hasFilter, hasIdeas, room) {
+function emptyMarkup(hasFilter, hasIdeas, room, query) {
   if (room && !hasFilter) return `<div class="ib-empty-map"><div><span>DEIN ARBEITSRAUM</span><h3>Welche Gedanken helfen bei dieser Frage?</h3><p>Unten losschreiben. Bestehende Gedanken findest du unter „Sammlung“.</p></div></div>`;
   if (!hasIdeas) return `<div class="ib-empty-map"><div><span>NOCH ZIEMLICH RUHIG HIER</span><h3>Der erste Gedanke macht den Anfang.</h3>
     <p>Ein Satz reicht. Unten losschreiben oder einen Link ablegen.</p></div></div>`;
-  return `<div class="ib-empty-map"><div><span>NICHTS GEFUNDEN</span><h3>Kein Gedanke passt zu diesem Filter.</h3>
-    <p>${hasFilter ? 'Tag oder Thema abwählen, oder die Suche leeren.' : 'Die Suche liefert keine Treffer.'}</p></div></div>`;
+  return `<div class="ib-empty-map"><div><span>NICHTS GEFUNDEN</span><h3>${query ? `Kein Gedanke passt zu „${html(query)}“.` : 'Kein Gedanke passt zu diesem Filter.'}</h3>
+    <p>${query ? 'Titel, Wortlaut, Ergänzungen und Tags der ganzen Sammlung wurden durchsucht.' : 'Tag oder Thema abwählen.'}</p>
+    <p><button class="ib-small-btn" type="button" data-idea-filter-clear="all">FILTER AUFHEBEN</button></p></div></div>`;
 }
 
-function listMarkup(ideas, selectedId, colorFor) {
-  return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, { meta: relativeDate(idea.createdAt) })).join('')}</div>`;
+const outsideRoom = (idea, room) => !!room && !room.ideaIds.includes(idea.id);
+function listMarkup(ideas, selectedId, terms, room) {
+  return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, {
+    terms,
+    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
+  })).join('')}</div>`;
 }
 
-function timelineMarkup(ideas, selectedId, colorFor) {
+function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
   const sorted = [...ideas].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const days = new Map();
   for (const idea of sorted) {
@@ -83,7 +121,10 @@ function timelineMarkup(ideas, selectedId, colorFor) {
   }
   return [...days].map(([label, entries]) => `<div class="ib-day">
     <div class="ib-day-label">${html(label)}</div>
-    <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, { color: colorFor(idea.topic), meta: sourceLabel(idea.source) })).join('')}</div>
+    <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
+      color: colorFor(idea.topic), terms, tags: true,
+      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : sourceLabel(idea.source)].filter(Boolean).join(' · '),
+    })).join('')}</div>
   </div>`).join('');
 }
 
@@ -101,7 +142,7 @@ function railMarkup(ideas, filter, colorFor) {
       <button type="button" data-idea-tag-filter="${html(tag)}"><span class="ib-rail-name">#${html(tag)}</span><span class="ib-rail-n">${count}</span></button>
       ${active ? `<button class="ib-rail-more" type="button" data-idea-tag-edit="${html(tag)}" title="Umbenennen oder zusammenlegen">⋯</button>` : ''}
     </div>`;
-  }).join('') : '<div class="ib-rail-empty">Noch keine Tags. Vorschläge erscheinen im Detail eines Gedankens.</div>';
+  }).join('') : '<div class="ib-rail-empty">Noch keine Tags. Vorschläge erscheinen unter „Mehr“ in einem Gedanken.</div>';
   const topicItems = [...topicCount].map(([topic, count]) => `<div class="ib-rail-item${filter.topic === topic ? ' is-active' : ''}">
     <button type="button" data-idea-topic-filter="${html(topic)}"><span class="ib-topic-dot" style="background:${colorFor(topic)}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${count}</span></button>
   </div>`).join('');
@@ -109,12 +150,12 @@ function railMarkup(ideas, filter, colorFor) {
     <div><div class="ib-rail-head">THEMEN <span>${topicCount.size}</span></div><div class="ib-rail-items">${topicItems}</div></div>`;
 }
 
-function filterMarkup(filter, visibleCount, groupCount) {
+function filterMarkup(filter, visibleCount, outsideCount) {
   const chips = [];
   if (filter.tag) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="tag">#${html(filter.tag)} <span>✕</span></button>`);
   if (filter.topic) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="topic">${html(filter.topic)} <span>✕</span></button>`);
   if (filter.query) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="query">„${html(filter.query)}“ <span>✕</span></button>`);
-  const note = chips.length ? `${visibleCount} Gedanken in ${groupCount} Themen` : 'Alle Gedanken';
+  const note = `${visibleCount} Treffer${outsideCount ? ` · ${outsideCount} nicht im Raum` : ''}`;
   return `<div class="ib-filter"><span>FILTER</span>${chips.join('')}<span class="ib-filter-note">${html(note)}</span></div>`;
 }
 
@@ -132,55 +173,64 @@ function relatedMarkup(idea, ideas, colorFor) {
   if (!related.length) return '';
   return `<div class="ib-related"><span class="ib-detail-label">VERWANDT ÜBER TAGS</span><div class="ib-related-rows">${related.map((other) => {
     const via = tagsOf(other).find((tag) => own.has(lower(tag)));
-    return `<button class="ib-related-row" type="button" data-idea-id="${html(other.id)}"><span class="ib-topic-dot" style="background:${colorFor(other.topic)}"></span><span class="ib-rail-name">${html(other.title)}</span><span class="ib-rail-n">#${html(via)}</span></button>`;
+    return `<button class="ib-related-row" type="button" data-related-open="${html(other.id)}"><span class="ib-topic-dot" style="background:${colorFor(other.topic)}"></span><span class="ib-rail-name">${html(other.title)}</span><span class="ib-rail-n">#${html(via)}</span></button>`;
   }).join('')}</div></div>`;
 }
 
-function detailMarkup(idea, ideas, colorFor, reading) {
-  if (!idea) return '<div class="ib-no-selection"><p>Wähle einen Gedanken aus.</p></div>';
-  const paragraphs = idea.source !== 'link' && idea.input ? paragraphsOf(idea) : [];
-  const points = (idea.keyPoints ?? []).map((point, index) => `<li><b>0${index + 1}</b><span>${html(point)}</span></li>`).join('');
-  const sourceButton = idea.url
-    ? `<a class="ib-icon-btn" href="${html(idea.url)}" target="_blank" rel="noreferrer" title="Quelle öffnen" aria-label="Quelle öffnen">↗</a>`
-    : '';
-  const topline = `<div class="ib-detail-topline"><span>● ${sourceLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}</span>
-    <span class="ib-topline-meta">${sourceButton}
-      <button class="ib-small-btn" type="button" data-edit-open>BEARBEITEN</button>
-      <button class="ib-small-btn" type="button" data-idea-reading>${reading ? 'SCHLIESSEN ⤡' : 'LESEMODUS ⤢'}</button>
-      <button class="ib-icon-btn is-danger" type="button" data-idea-delete title="In den Papierkorb" aria-label="In den Papierkorb">✕</button></span></div>`;
-  const date = new Date(idea.createdAt).toLocaleDateString('de-DE');
-  if (reading) {
-    const body = (paragraphs.length ? paragraphs : [idea.summary]).map((part) => `<p>${html(part)}</p>`).join('');
-    return `${topline}<div class="ib-reading">
-      <div class="ib-reading-side">
-        <div><span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}</span></div>
-        <div><span class="ib-detail-label">TAGS</span>${tagEditorMarkup(idea)}</div>
-        ${points ? `<div><span class="ib-detail-label">WAS HÄNGEN BLEIBT</span><ul>${idea.keyPoints.map((point) => `<li>${html(point)}</li>`).join('')}</ul></div>` : ''}
-        ${paragraphs.length ? '<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button>' : ''}
-        <div class="ib-reading-foot">${html(idea.engine)}<br>${html(date)}</div>
-      </div>
-      <article><h2>${html(idea.title)}</h2>${paragraphs.length ? `<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button><p class="ib-reading-lede">${html(idea.summary)}</p>` : ''}<div class="ib-reading-body">${body}</div></article>
-    </div>`;
+function connectionCount(idea, ideas) {
+  let count = ideas.some((item) => item.id === idea.parentId) ? 1 : 0;
+  for (const from of ideas) for (const edge of from.relations ?? []) {
+    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ideas.some((item) => item.id === edge.targetId)) count += 1;
   }
-  const text = paragraphs.length
-    ? `<div class="ib-text-head"><span class="ib-detail-label">WORTLAUT</span><button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button></div>
-       <div class="ib-text-body">${paragraphs.map((part) => `<p>${html(part)}</p>`).join('')}</div>`
-    : '';
-  return `${topline}
-    ${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
+  return count;
+}
+
+function panelHeadMarkup(idea) {
+  const kind = idea ? `${kindLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}` : '';
+  return `<div class="ib-panel-head"><span class="ib-detail-kind">${kind}</span><span class="ib-panel-actions">${idea ? '<button type="button" data-inline-edit>Weiterschreiben</button>' : ''}<button type="button" data-detail-close aria-label="Gedanken schließen">×</button></span></div>`;
+}
+
+// Der Gedanke steht zuerst in eigenen Worten; Einordnung und Werkzeuge liegen unter „Mehr“.
+function detailMarkup(idea, ideas, colorFor, terms) {
+  if (!idea) return '';
+  const mark = (value) => markText(value, terms, html);
+  const date = new Date(idea.createdAt).toLocaleDateString('de-DE');
+  const link = idea.source === 'link';
+  const paragraphs = link ? (idea.summary ? [idea.summary] : []) : paragraphsOf(idea);
+  const showTitle = link || !startsWithTitle(idea.input ?? '', idea.title);
+  const focusOnBody = showTitle ? '' : ` tabindex="-1" data-detail-focus aria-label="Gedanke: ${html(idea.title)}"`;
+  const points = (idea.keyPoints ?? []).length ? `<div class="ib-points-block"><span class="ib-detail-label">WAS HÄNGEN BLEIBT</span><ul>${idea.keyPoints.map((point, index) => `<li><b>0${index + 1}</b><span>${mark(point)}</span></li>`).join('')}</ul></div>` : '';
+  const notes = idea.notes ? `<section class="ib-own-notes"><span class="ib-detail-label">EIGENE ERGÄNZUNGEN</span><p>${mark(idea.notes)}</p></section>` : '';
+  const squash = (value) => fold(value).replace(/\s+/g, ' ').trim();
+  const showSummary = !link && idea.summary && idea.engine !== 'Lokale Analyse' && squash(idea.summary) !== squash(idea.title) && !squash(idea.input).startsWith(squash(idea.summary));
+  const summary = showSummary ? `<div class="ib-summary-block"><span class="ib-detail-label">KURZ</span><p>${mark(idea.summary)}</p></div>` : '';
+  const body = paragraphs.length
+    ? paragraphs.map((part) => `<p>${mark(part)}</p>`).join('')
+    : `<p class="ib-text-pending">${link && idea.analysisState === 'pending' ? 'Zusammenfassung folgt nach der Analyse.' : link ? 'Keine Zusammenfassung vorhanden.' : ''}</p>`;
+  const url = link && idea.url ? `<a class="ib-detail-url" href="${html(idea.url)}" target="_blank" rel="noreferrer"><b>${html(hostOf(idea.url))}</b><span>${html(pathOf(idea.url))}</span> ↗</a>` : '';
+  const copy = !link && (idea.input ?? '').trim() ? '<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button>' : '';
+  const connections = connectionCount(idea, ideas);
+  return `${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
     ${idea.analysisWarning ? `<p class="ib-analysis-note is-error">${html(idea.analysisWarning)} ${idea.analysisState === 'failed' ? '<button class="ib-small-btn" type="button" data-analysis-retry>ERNEUT VERSUCHEN</button>' : ''}</p>` : ''}
-    <h3>${html(idea.title)}</h3>
-    <details class="ib-organize"><summary>Einordnen &amp; Analyse</summary><div class="ib-meta-grid">
-      <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
-      <span class="ib-detail-label">TAGS</span>${tagEditorMarkup(idea)}
-      <span class="ib-detail-label">ANALYSE</span><span>${html(idea.engine)} · ${html(date)}</span>
-    </div></details>
-    <p class="ib-summary">${html(idea.summary)}</p>
-    ${text}
-    ${idea.notes ? `<section class="ib-own-notes"><span class="ib-detail-label">EIGENE ERGÄNZUNGEN</span><p>${html(idea.notes)}</p></section>` : ''}
-    <div class="ib-points-block"><span class="ib-detail-label">WAS HÄNGEN BLEIBT</span><ul>${points || '<li><span>Keine weiteren Punkte.</span></li>'}</ul></div>
-    ${connectionsMarkup(idea, ideas)}
-    ${relatedMarkup(idea, ideas, colorFor)}`;
+    ${showTitle ? `<h3 class="ib-detail-title" tabindex="-1" data-detail-focus>${mark(idea.title)}</h3>` : ''}
+    ${url}
+    <div class="ib-detail-meta">
+      <button class="ib-meta-topic" type="button" data-idea-topic-filter="${html(idea.topic)}" title="Nach Thema filtern"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}</button>
+      ${tagsOf(idea).map((tag) => `<button class="ib-tag-chip" type="button" data-idea-tag-filter="${html(tag)}" title="Nach #${html(tag)} filtern">#${html(tag)}</button>`).join('')}
+      ${copy}
+    </div>
+    <article class="ib-text-body"${focusOnBody}>${body}</article>
+    ${link ? points + notes : notes + points + summary}
+    ${relatedMarkup(idea, ideas, colorFor)}
+    <details class="ib-organize"><summary>Mehr${connections ? ` · ${connections} Verbindung${connections === 1 ? '' : 'en'}` : ''}</summary>
+      <div class="ib-meta-grid">
+        <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
+        <span class="ib-detail-label">TAGS</span>${tagEditorMarkup(idea)}
+        <span class="ib-detail-label">ANALYSE</span><span>${html(idea.engine)} · ${html(date)}</span>
+      </div>
+      ${connectionsMarkup(idea, ideas)}
+      <div class="ib-organize-actions"><button class="ib-small-btn" type="button" data-edit-open>BEARBEITEN</button><button class="ib-small-btn is-danger" type="button" data-idea-delete>IN DEN PAPIERKORB</button></div>
+    </details>`;
 }
 
 export function initGedankenraum({ root, getToken }) {
@@ -195,14 +245,19 @@ export function initGedankenraum({ root, getToken }) {
   let selectedId = null;
   let busy = false;
   let keep = false;
-  let reading = false;
   let detailOpen = false;
   let libraryOpen = false;
+  let resumePanel = false;
+  let renderedId = null;
   let messageTimer = null;
   let lastCardClick = null;
   let view = ['list', 'time', 'tree'].includes(localStorage.getItem(VIEW_KEY)) ? localStorage.getItem(VIEW_KEY) : 'list';
-  const filter = { tag: null, topic: null, query: '' };
+  // filter.global: ein Tag- oder Themenfilter, der aus einem geöffneten Gedanken kommt, sucht in der ganzen Sammlung.
+  const filter = { tag: null, topic: null, query: '', global: false };
   let editingTag = null;
+  const foldCache = new Map();
+  const coarse = window.matchMedia('(pointer:coarse)');
+  const narrow = window.matchMedia('(max-width:900px)');
 
   const q = (selector) => root.querySelector(selector);
   const captureInput = q('[data-idea-input]');
@@ -210,6 +265,7 @@ export function initGedankenraum({ root, getToken }) {
   const keepToggle = q('[data-idea-keep]');
   const typeLabel = q('[data-idea-type]');
   const searchInput = q('[data-idea-search]');
+  const searchStatus = q('[data-search-status]');
   const grid = q('[data-idea-grid]');
   const rail = q('[data-idea-rail]');
   const map = q('[data-idea-map]');
@@ -254,56 +310,99 @@ export function initGedankenraum({ root, getToken }) {
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
     const parsed = { tag: null, topic: null, text: [] };
     for (const token of tokens) {
-      if (token.startsWith('#') && token.length > 1) parsed.tag = token.slice(1);
-      else if (/^thema:/i.test(token) && token.length > 6) parsed.topic = token.slice(6);
+      if (token === '#' || /^thema:$/i.test(token)) continue;
+      if (token.startsWith('#')) parsed.tag = token.slice(1);
+      else if (/^thema:/i.test(token)) parsed.topic = token.slice(6);
       else parsed.text.push(token);
     }
     return { ...parsed, text: parsed.text.join(' ') };
   };
+  // Gefaltete Felder je Gedanke, damit Tippen in der Suche nicht jedes Mal alles neu faltet.
+  const foldedOf = (idea) => {
+    const key = `${idea.id}:${idea.updatedAt ?? ''}`;
+    let entry = foldCache.get(key);
+    if (!entry) {
+      if (foldCache.size > ideas.length * 2 + 50) foldCache.clear();
+      const tagList = tagsOf(idea).map(fold);
+      entry = {
+        title: fold(idea.title), tagList, tags: [...tagList, ...(idea.keywords ?? []).map(fold)].join(' '), topic: fold(idea.topic), summary: fold(idea.summary),
+        hay: fold([idea.title, idea.summary, idea.topic, ...(idea.keywords ?? []), ...tagsOf(idea), idea.input, idea.notes].join('\n')),
+      };
+      foldCache.set(key, entry);
+    }
+    return entry;
+  };
+  // Der Raum ordnet, die Suche findet: Getipptes durchsucht die ganze Sammlung,
+  // Tag- und Themenfilter aus der Sammlung bleiben im Raum.
   const visibleIdeas = () => {
     const parsed = parseQuery(searchInput.value);
-    const tag = lower(filter.tag ?? parsed.tag ?? '');
-    const topic = lower(filter.topic ?? parsed.topic ?? '');
-    const query = lower(parsed.text);
-    return spaces.contextIdeas(ideas).filter((idea) => (!tag || tagsOf(idea).some((candidate) => lower(candidate) === tag))
-      && (!topic || lower(idea.topic).includes(topic))
-      && (!query || [idea.title, idea.summary, idea.topic, ...(idea.keywords ?? []), ...tagsOf(idea), idea.input, idea.notes]
-        .join(' ').toLocaleLowerCase('de-DE').includes(query)));
+    const terms = termsOf(parsed.text);
+    const chipTag = fold(filter.tag ?? '');
+    const typedTags = parsed.tag ? variantsOf(fold(parsed.tag)) : [];
+    const topics = (filter.topic ?? parsed.topic) ? variantsOf(fold(filter.topic ?? parsed.topic)) : [];
+    const searching = !!(terms.length || typedTags.length || parsed.topic || (filter.global && (filter.tag || filter.topic)));
+    const pool = searching ? ideas : spaces.contextIdeas(ideas);
+    const room = spaces.currentRoom();
+    const results = pool.filter((idea) => {
+      const folded = foldedOf(idea);
+      return (!chipTag || folded.tagList.includes(chipTag))
+        && (!typedTags.length || typedTags.some((variant) => folded.tagList.some((tag) => tag.startsWith(variant))))
+        && (!topics.length || topics.some((variant) => folded.topic.includes(variant)))
+        && matches(folded.hay, terms);
+    });
+    if (!terms.length) return results;
+    return results
+      .map((idea, index) => ({ idea, index, score: scoreOf(foldedOf(idea), terms) + (room?.ideaIds.includes(idea.id) ? 100 : 0) }))
+      .sort((left, right) => right.score - left.score || left.index - right.index)
+      .map(({ idea }) => idea);
   };
   const render = () => {
-    if (spaces.roomId() && !spaces.contextIdeas(ideas).some((idea) => idea.id === selectedId)) selectedId = null;
     const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
     const viewport = q('[data-mm-viewport]');
     const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
-    filter.query = parseQuery(searchInput.value).text;
+    // Beim selben Gedanken bleiben Scrollstand, aufgeklapptes „Mehr“ und Fokus in der Ansicht erhalten.
+    const sameIdea = selectedId === renderedId;
+    const panelScroll = sameIdea ? detail.scrollTop : 0;
+    const organizeOpen = sameIdea && !!detail.querySelector('.ib-organize')?.open;
+    const panelFocus = sameIdea && detail.contains(document.activeElement) ? focusKeyOf(document.activeElement) : null;
+    const parsed = parseQuery(searchInput.value);
+    const terms = termsOf(parsed.text);
+    filter.query = searchInput.value.trim();
     const visible = visibleIdeas();
-    if (!inline.isEditing() && !visible.some((idea) => idea.id === selectedId)) selectedId = null;
     const idea = selected();
+    const room = spaces.currentRoom();
     count.textContent = `${visible.length} VON ${ideas.length}`;
-    grid.classList.toggle('is-reading', reading && !!idea);
-    grid.classList.toggle('is-tree', view === 'tree' && !reading);
+    grid.classList.toggle('is-tree', view === 'tree');
     grid.classList.toggle('has-library', libraryOpen);
     grid.classList.toggle('has-detail', detailOpen && !!idea);
     q('[data-library]').hidden = !libraryOpen;
     q('[data-library-toggle]').setAttribute('aria-expanded', String(libraryOpen));
     q('[data-view-select]').value = view;
     detail.hidden = !detailOpen || !idea;
-    for (const button of root.querySelectorAll('[data-idea-view]')) button.setAttribute('aria-pressed', String(button.dataset.ideaView === view));
     rail.innerHTML = spaces.railMarkup() + railMarkup(spaces.contextIdeas(ideas), filter, colorFor);
     q('[data-undo]').disabled = !canUndo;
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
-    const groupCount = new Set(visible.map((candidate) => candidate.topic)).size;
     const hasFilter = !!(filter.tag || filter.topic || filter.query);
+    const outside = room ? visible.filter((candidate) => outsideRoom(candidate, room)).length : 0;
     let body;
     if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
-    else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, spaces.currentRoom());
-    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor);
-    else body = listMarkup(visible, selectedId, colorFor);
-    map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, groupCount) : '') + body;
-    detail.innerHTML = `<div class="ib-panel-head"><h2>Gedanke</h2><button type="button" data-detail-close aria-label="Gedanken schließen">×</button></div>` + detailMarkup(idea, ideas, colorFor, reading);
+    else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, room, filter.query);
+    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, room);
+    else body = listMarkup(visible, selectedId, terms, room);
+    map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, outside) : '') + body;
+    detail.innerHTML = panelHeadMarkup(idea) + detailMarkup(idea, ideas, colorFor, terms);
+    const announce = hasFilter ? (visible.length ? `${visible.length} Treffer` : 'Nichts gefunden') : '';
+    if (searchStatus.textContent !== announce) searchStatus.textContent = announce;
+    captureInput.placeholder = room ? `Gedanke zu „${shorten(room.question, 40)}“ …` : CAPTURE_PLACEHOLDER;
     spaces.sync();
     inline.decorate();
     if (scroll && q('[data-mm-viewport]')) { q('[data-mm-viewport]').scrollLeft = scroll.left; q('[data-mm-viewport]').scrollTop = scroll.top; }
+    renderedId = idea?.id ?? null;
+    if (!detail.hidden) {
+      if (organizeOpen) detail.querySelector('.ib-organize').open = true;
+      detail.scrollTop = panelScroll;
+      if (panelFocus) [...detail.querySelectorAll('button, a, [tabindex]')].find((node) => focusKeyOf(node) === panelFocus)?.focus({ preventScroll: true });
+    }
     if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
   };
   const applySnapshot = (snapshot) => {
@@ -313,7 +412,7 @@ export function initGedankenraum({ root, getToken }) {
     canUndo = snapshot.canUndo ?? false;
     rooms = snapshot.rooms ?? [];
     reflections = snapshot.reflections ?? [];
-    if (!ideas.some((idea) => idea.id === selectedId)) selectedId = null;
+    if (!ideas.some((idea) => idea.id === selectedId)) { selectedId = null; detailOpen = false; }
   };
   const post = async (path, command = {}) => {
     mutationCount += 1; epoch += 1;
@@ -340,10 +439,37 @@ export function initGedankenraum({ root, getToken }) {
       if (command.type === 'restore') showMessage('Gedanke wiederhergestellt.');
       render(); return result;
   };
+  const clearFilters = () => { filter.tag = null; filter.topic = null; filter.global = false; searchInput.value = ''; };
+  const cardOf = (id) => [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id) ?? null;
+  const focusPanelContent = () => detail.querySelector('[data-detail-focus]')?.focus({ preventScroll: true });
+  // Ein Klick liest: Auswahl öffnet den Gedanken. Der Fokus wandert nur per Tastatur in die Ansicht.
+  const select = (id, { focusPanel = false } = {}) => {
+    if (inline.isEditing()) { inline.focus(); return; }
+    const wasOpen = detailOpen && id === selectedId && !detail.hidden;
+    selectedId = id; detailOpen = true; spaces.closeResults(); render();
+    if (focusPanel) focusPanelContent();
+    if (!wasOpen || focusPanel) {
+      const hit = detail.querySelector('mark.ib-hit');
+      if (hit) hit.scrollIntoView({ block: 'center' }); else detail.scrollTop = 0;
+    }
+  };
+  const closeDetail = () => {
+    const id = selectedId;
+    detailOpen = false; render();
+    (cardOf(id) ?? searchInput).focus({ preventScroll: true });
+  };
+  const closeOverlays = () => {
+    detailOpen = false; libraryOpen = false; spaces.closeResults(); render();
+  };
+  // Filter werden nur aufgehoben, wenn das Ziel sonst unsichtbar bliebe – und dann wird es gesagt.
   const reveal = (id, open = true) => {
-      if (spaces.roomId() && !spaces.currentRoom().ideaIds.includes(id)) spaces.reset();
-      filter.tag = null; filter.topic = null; searchInput.value = ''; selectedId = id;
-      detailOpen = open;
+      selectedId = id; detailOpen = open;
+      if (open) spaces.closeResults();
+      if (!visibleIdeas().some((idea) => idea.id === id)) {
+        clearFilters();
+        if (!visibleIdeas().some((idea) => idea.id === id)) { spaces.reset(); showMessage('Raum verlassen, damit der Gedanke sichtbar ist.'); }
+        else showMessage('Filter aufgehoben.');
+      }
       const visited = new Set();
       let idea = selected();
       while (idea?.parentId && !visited.has(idea.parentId)) {
@@ -351,24 +477,29 @@ export function initGedankenraum({ root, getToken }) {
         idea = ideas.find((item) => item.id === idea.parentId);
       }
       render();
-      const node = [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id);
+      const node = cardOf(id);
       node?.focus({ preventScroll: true }); node?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   };
   const spaces = initWorkspaces({
     root, snapshot: () => ({ ideas, trash, canUndo, rooms, reflections }), command: runCommand, render, reveal, selected,
-    visibleIds: () => visibleIdeas().map((idea) => idea.id),
+    visibleIds: () => visibleIdeas().filter((idea) => !spaces.roomId() || spaces.currentRoom().ideaIds.includes(idea.id)).map((idea) => idea.id),
     canNavigate: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
     openPanel: () => { detailOpen = false; render(); },
-    changeContext: () => {
-      filter.tag = null; filter.topic = null; searchInput.value = ''; reading = false;
-      selectedId = null; detailOpen = false;
-    },
   });
-  const inline = initInlineThought({ root, command: runCommand, render, reveal, notify: showMessage, selected });
-  const editInline = (idea = selected()) => { detailOpen = false; spaces.closeResults(); inline.openEdit(idea); };
+  const inline = initInlineThought({
+    root, command: runCommand, render, notify: showMessage, selected,
+    reveal: (id) => { const open = resumePanel; resumePanel = false; reveal(id, open); },
+  });
+  const editInline = (idea = selected()) => {
+    if (!idea) return;
+    if (inline.isEditing()) { inline.focus(); return; }
+    resumePanel = detailOpen && selectedId === idea.id;
+    detailOpen = false; spaces.closeResults(); inline.openEdit(idea);
+  };
   const thinking = initThinkingTools({
     root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
-    render, notify: showMessage, reveal, openInline: editInline, newInline: (kind, idea) => { detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
+    render, notify: showMessage, reveal, openInline: editInline,
+    newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
   });
   const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   const setTags = async (idea, tags) => {
@@ -376,9 +507,12 @@ export function initGedankenraum({ root, getToken }) {
     replaceIdea(result.idea);
     render();
   };
-  const select = (id) => { selectedId = id; render(); };
-  const setView = (next) => { view = next; reading = false; localStorage.setItem(VIEW_KEY, next); render(); };
-  const toggleFilter = (key, value) => { filter[key] = filter[key] === value ? null : value; render(); };
+  const setView = (next) => { view = next; localStorage.setItem(VIEW_KEY, next); render(); };
+  const toggleFilter = (key, value, global = false) => {
+    filter[key] = filter[key] === value ? null : value;
+    filter.global = !!(filter.tag || filter.topic) && (filter[key] ? global : filter.global);
+    render();
+  };
 
   const showStorageMessage = (text) => {
     storageMessage.textContent = text ?? '';
@@ -401,6 +535,8 @@ export function initGedankenraum({ root, getToken }) {
     updateStorageFile();
     return storage;
   };
+  // Ablegen fragt nichts und räumt nichts weg: Suche, Filter und geöffneter Gedanke bleiben,
+  // solange der neue Gedanke damit sichtbar ist.
   const capture = async () => {
     const input = captureInput.value.trim();
     if (!input || busy) return;
@@ -410,14 +546,15 @@ export function initGedankenraum({ root, getToken }) {
     const submitted = captureInput.value;
     showMessage('');
     try {
+      const room = spaces.currentRoom();
       const result = await post('/api/ideas/execute', { type: 'capture', input, keep: keep || !isLink(input), roomId: spaces.roomId() });
-      selectedId = null; detailOpen = false;
-      reading = false;
-      filter.tag = null; filter.topic = null; searchInput.value = '';
       if (captureInput.value === submitted) captureInput.value = '';
       updateType();
-      showMessage('Gespeichert. Du kannst gleich weiterschreiben.');
+      let text = room ? `Gespeichert in „${shorten(room.question, 40)}“.` : 'Gespeichert.';
+      if (!visibleIdeas().some((idea) => idea.id === result.idea.id)) { clearFilters(); text += ' Filter aufgehoben.'; }
+      showMessage(text);
       render();
+      if (view !== 'tree') map.scrollTop = 0;
       captureInput.focus();
     } catch (error) {
       showMessage(error.message, true);
@@ -449,22 +586,55 @@ export function initGedankenraum({ root, getToken }) {
   });
   captureButton.addEventListener('click', capture);
   searchInput.addEventListener('input', render);
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      const first = map.querySelector('[data-idea-id]');
+      if (first) { event.preventDefault(); select(first.dataset.ideaId, { focusPanel: true }); }
+    } else if (event.key === 'ArrowDown') {
+      const first = map.querySelector('[data-idea-id]');
+      if (first) { event.preventDefault(); first.focus(); }
+    } else if (event.key === 'Escape' && searchInput.value) {
+      event.preventDefault(); event.stopPropagation();
+      searchInput.value = ''; render();
+    }
+  });
+  searchInput.addEventListener('focus', () => {
+    if (narrow.matches && (detailOpen || libraryOpen || spaces.resultsOpen())) closeOverlays();
+  });
   q('[data-view-select]').addEventListener('change', (event) => {
     if (inline.isEditing()) { event.target.value = view; inline.focus(); return; }
     setView(event.target.value);
   });
 
-  const closeMenu = () => { menuList.hidden = true; menuOpen.setAttribute('aria-expanded', 'false'); };
+  const closeMenu = () => {
+    if (menuList.contains(document.activeElement)) menuOpen.focus();
+    menuList.hidden = true; menuOpen.setAttribute('aria-expanded', 'false');
+  };
   menuOpen.addEventListener('click', () => {
     menuList.hidden = !menuList.hidden;
     menuOpen.setAttribute('aria-expanded', String(!menuList.hidden));
   });
   document.addEventListener('click', (event) => { if (!event.target.closest?.('[data-menu]')) closeMenu(); });
+  const inField = (target) => !!target.closest?.('input, textarea, select, dialog, [contenteditable="true"]');
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (event.shiftKey) captureInput.focus(); else { searchInput.focus(); searchInput.select(); }
+      return;
+    }
+    if (plain && !inField(event.target) && !q('dialog[open]')) {
+      if (event.key === '/') { event.preventDefault(); searchInput.focus(); searchInput.select(); return; }
+      if (event.key === 'n' && !event.shiftKey) { event.preventDefault(); captureInput.focus(); return; }
+    }
+    if (event.key !== 'Escape' || event.target === captureInput) return;
     if (!menuList.hidden) closeMenu();
-    else if (reading) { reading = false; render(); }
-    else if (!q('dialog[open]') && !inline.isEditing()) { detailOpen = false; libraryOpen = false; selectedId = null; spaces.clearSelection(); render(); }
+    else if (q('dialog[open]') || inline.isEditing()) return;
+    else if ((detailOpen && selected()) || libraryOpen || spaces.resultsOpen()) {
+      const id = selectedId;
+      closeOverlays();
+      (cardOf(id) ?? (document.activeElement === document.body ? searchInput : null))?.focus({ preventScroll: true });
+    } else { selectedId = null; spaces.clearSelection(); render(); }
   });
 
   importOpen.addEventListener('click', () => { closeMenu(); importFile.click(); });
@@ -483,7 +653,7 @@ export function initGedankenraum({ root, getToken }) {
       }
       const result = await post('/api/ideas/import', imported);
       ideas = result.ideas;
-      selectedId = ideas[0]?.id ?? null;
+      selectedId = null; detailOpen = false;
       const duplicates = result.skipped ? ` ${result.skipped} Duplikat${result.skipped === 1 ? '' : 'e'} übersprungen.` : '';
       showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}${result.importedRooms ? ` ${result.importedRooms} Arbeitsräume übernommen.` : ''}${result.importedReflections ? ` ${result.importedReflections} Auswertungen übernommen.` : ''}`);
       render();
@@ -546,17 +716,18 @@ export function initGedankenraum({ root, getToken }) {
   root.addEventListener('click', async (event) => {
     const target = event.target;
     if (target.closest('[data-library-toggle]')) { libraryOpen = !libraryOpen; render(); return; }
-    if (target.closest('[data-detail-close]')) { detailOpen = false; reading = false; render(); q('[data-detail-open]')?.focus(); return; }
-    if (target.closest('[data-detail-open]')) { detailOpen = true; spaces.closeResults(); render(); q('[data-detail-close]')?.focus(); return; }
+    if (target.closest('[data-detail-close]')) { closeDetail(); return; }
     if (target.closest('[data-inline-edit]')) { editInline(); return; }
-    if (target.closest('[data-clear-focus]')) { selectedId = null; detailOpen = false; render(); return; }
     if (target.closest('[data-inline-editor]')) return;
+    if (target === grid && narrow.matches && (detailOpen || libraryOpen || spaces.resultsOpen())) { closeOverlays(); return; }
     const viewButton = target.closest?.('[data-idea-view]');
     if (viewButton) return setView(viewButton.dataset.ideaView);
     const clear = target.closest?.('[data-idea-filter-clear]');
     if (clear) {
-      if (clear.dataset.ideaFilterClear === 'query') searchInput.value = '';
-      else filter[clear.dataset.ideaFilterClear] = null;
+      const key = clear.dataset.ideaFilterClear;
+      if (key === 'all') clearFilters();
+      else if (key === 'query') searchInput.value = '';
+      else { filter[key] = null; if (!filter.tag && !filter.topic) filter.global = false; }
       return render();
     }
     const tagEdit = target.closest?.('[data-idea-tag-edit]');
@@ -568,24 +739,22 @@ export function initGedankenraum({ root, getToken }) {
       return setTags(idea, tagsOf(idea).filter((tag) => tag !== tagRemove.dataset.ideaTagRemove)).catch((error) => showMessage(error.message, true));
     }
     const tagFilter = target.closest?.('[data-idea-tag-filter]');
-    if (tagFilter) return toggleFilter('tag', tagFilter.dataset.ideaTagFilter);
+    if (tagFilter) return toggleFilter('tag', tagFilter.dataset.ideaTagFilter, detail.contains(tagFilter));
     const topicFilter = target.closest?.('[data-idea-topic-filter]');
-    if (topicFilter) return toggleFilter('topic', topicFilter.dataset.ideaTopicFilter);
+    if (topicFilter) return toggleFilter('topic', topicFilter.dataset.ideaTopicFilter, detail.contains(topicFilter));
     const row = target.closest?.('[data-idea-id]');
     if (row) {
       if (inline.isEditing()) { inline.focus(); return; }
       if (spaces.handlePick(row.dataset.ideaId, event)) return;
-      const doubleClick = event.detail > 0 && lastCardClick?.id === row.dataset.ideaId && event.timeStamp - lastCardClick.time < 400;
+      // Doppelklick mit der Maus öffnet den Editor; die Liste wird zwischen den Klicks neu gezeichnet.
+      const doubleClick = !coarse.matches && event.detail > 0 && lastCardClick?.id === row.dataset.ideaId && event.timeStamp - lastCardClick.time < 400;
       lastCardClick = { id: row.dataset.ideaId, time: event.timeStamp };
       if (doubleClick) { selectedId = row.dataset.ideaId; editInline(); return; }
-      return select(row.dataset.ideaId);
+      return select(row.dataset.ideaId, { focusPanel: event.detail === 0 });
     }
     if (!idea) return;
     try {
-      if (target.closest?.('[data-idea-reading]')) {
-        reading = !reading;
-        render();
-      } else if (target.closest?.('[data-idea-tag-accept]')) {
+      if (target.closest?.('[data-idea-tag-accept]')) {
         await setTags(idea, [...tagsOf(idea), target.closest('[data-idea-tag-accept]').dataset.ideaTagAccept]);
       } else if (target.closest?.('[data-idea-tag-accept-all]')) {
         await setTags(idea, [...tagsOf(idea), ...suggestionsOf(idea)]);
@@ -606,10 +775,10 @@ export function initGedankenraum({ root, getToken }) {
       } else if (target.closest?.('[data-idea-delete]')) {
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
         ideas = ideas.filter((item) => item.id !== idea.id);
-        selectedId = ideas[0]?.id ?? null;
-        reading = false;
-        showMessage('Im Papierkorb. Mit Rückgängig oder im Papierkorb wiederherstellen.');
+        selectedId = null; detailOpen = false;
+        showMessage('Im Papierkorb. Rückgängig mit Strg+Z oder über ⋯.');
         render();
+        (map.querySelector('[data-idea-id]') ?? captureInput).focus({ preventScroll: true });
       }
     } catch (error) {
       showMessage(error.message, true);
@@ -617,16 +786,20 @@ export function initGedankenraum({ root, getToken }) {
   });
   menuList.addEventListener('click', (event) => { if (event.target.closest('button')) closeMenu(); });
   root.addEventListener('dblclick', (event) => {
+    if (coarse.matches || inline.isEditing()) return;
     const row = event.target.closest('[data-idea-map] [data-idea-id]');
     if (row && !spaces.isSelecting()) { selectedId = row.dataset.ideaId; editInline(); }
   });
   root.addEventListener('keydown', (event) => {
     const row = event.target.closest('[data-idea-map] .ib-row');
-    if (row && event.key === 'F2') { event.preventDefault(); selectedId = row.dataset.ideaId; editInline(); }
-  });
-  root.addEventListener('keydown', (event) => {
-    const node = event.target.closest?.('[data-idea-topic-filter][role="button"]');
-    if (node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); node.click(); }
+    if (!row) return;
+    if (event.key === 'F2') {
+      event.preventDefault();
+      if (inline.isEditing()) { inline.focus(); return; }
+      selectedId = row.dataset.ideaId; editInline();
+    }
+    else if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); spaces.handlePick(row.dataset.ideaId, { shiftKey: true, preventDefault() {} }); }
+    else if (event.key === 'ArrowUp' && row === map.querySelector('.ib-row')) { event.preventDefault(); searchInput.focus(); }
   });
 
   q('[data-stop]').addEventListener('click', async () => {
@@ -677,7 +850,7 @@ export function initGedankenraum({ root, getToken }) {
       const result = await post('/api/storage', { directory: storageDirectory.value.trim(), ...(mode && { mode }) });
       spaces.reset();
       ideas = result.ideas;
-      selectedId = ideas[0]?.id ?? null;
+      selectedId = null; detailOpen = false;
       storageOpen.title = result.filePath;
       storageDialog.close();
       const messages = {
@@ -726,6 +899,7 @@ export function initGedankenraum({ root, getToken }) {
       applySnapshot(snapshot);
       selectedId = null;
       render();
+      if (!narrow.matches && !q('dialog[open]')) captureInput.focus();
       pollTimer = setTimeout(refresh, 1200);
       fetch('/api/ideas/status').then((response) => response.json()).then((engine) => {
         status.textContent = engine.engine ?? 'Analyse nicht verfügbar';
