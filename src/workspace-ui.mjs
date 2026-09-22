@@ -209,7 +209,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
     reset: () => { activeId = null; picked.clear(); selecting = false; closeResults(); },
     contextIdeas: (ideas) => currentRoom() ? ideas.filter((idea) => currentRoom().ideaIds.includes(idea.id)) : ideas,
     isEditing: () => !!draggedId || (dialog.open && mode !== 'results'),
-    railMarkup: () => `<div><div class="ib-rail-head">ARBEITSRÄUME</div><div class="ib-rail-items">${snapshot().rooms.filter((room) => !room.archivedAt).map((room) => `<div class="ib-rail-item${room.id === activeId ? ' is-active' : ''}"><button type="button" data-open-room="${html(room.id)}"><span class="ib-rail-name">${html(room.question)}</span><span class="ib-rail-n">${snapshot().ideas.filter((idea) => room.ideaIds.includes(idea.id)).length}</span></button></div>`).join('') || '<p class="ib-tools-note">Sammle Gedanken zu einer eigenen Frage.</p>'}</div></div>`,
+    railItems: () => snapshot().rooms.filter((room) => !room.archivedAt).map((room) => `<div class="ib-rail-item${room.id === activeId ? ' is-active' : ''}"><button type="button" data-open-room="${html(room.id)}"><span class="ib-rail-name">${html(room.question)}</span><span class="ib-rail-n">${snapshot().ideas.filter((idea) => room.ideaIds.includes(idea.id)).length}</span></button></div>`).join('') || '<p class="ib-tools-note">Sammle Gedanken zu einer eigenen Frage.</p>',
     sync() {
       if (activeId && !currentRoom()) activeId = null;
       for (const id of picked) if (!snapshot().ideas.some((idea) => idea.id === id)) picked.delete(id);

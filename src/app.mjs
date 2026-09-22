@@ -5,6 +5,8 @@ import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
 const VIEW_KEY = 'gedankenraum.view';
+const RAIL_KEY = 'gedankenraum.rail';
+const RAIL_SECTIONS = ['rooms', 'tags', 'topics'];
 const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -128,7 +130,13 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
   </div>`).join('');
 }
 
-function railMarkup(ideas, filter, colorFor) {
+// Jede Gruppe der Sammlung lässt sich über ihre Überschrift einklappen, damit lange Tag-Listen nicht alles verdecken.
+const railSection = (key, title, count, items, collapsed) => `<section class="ib-rail-section">
+  <button class="ib-rail-head" type="button" data-rail-toggle="${key}" aria-expanded="${!collapsed}" aria-controls="rail-${key}"><span class="ib-rail-title">${title}</span><span class="ib-rail-count">${count}</span></button>
+  <div class="ib-rail-items" id="rail-${key}"${collapsed ? ' hidden' : ''}>${items}</div>
+</section>`;
+
+function railMarkup(ideas, filter, colorFor, collapsed) {
   const tagCount = new Map();
   const topicCount = new Map();
   for (const idea of ideas) {
@@ -146,8 +154,8 @@ function railMarkup(ideas, filter, colorFor) {
   const topicItems = [...topicCount].map(([topic, count]) => `<div class="ib-rail-item${filter.topic === topic ? ' is-active' : ''}">
     <button type="button" data-idea-topic-filter="${html(topic)}"><span class="ib-topic-dot" style="background:${colorFor(topic)}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${count}</span></button>
   </div>`).join('');
-  return `<div><div class="ib-rail-head">TAGS <span>${tags.length}</span></div><div class="ib-rail-items">${tagItems}</div></div>
-    <div><div class="ib-rail-head">THEMEN <span>${topicCount.size}</span></div><div class="ib-rail-items">${topicItems}</div></div>`;
+  return railSection('tags', 'TAGS', tags.length, tagItems, collapsed.has('tags'))
+    + railSection('topics', 'THEMEN', topicCount.size, topicItems, collapsed.has('topics'));
 }
 
 function filterMarkup(filter, visibleCount, outsideCount) {
@@ -252,6 +260,9 @@ export function initGedankenraum({ root, getToken }) {
   let messageTimer = null;
   let lastCardClick = null;
   let view = ['list', 'time', 'tree'].includes(localStorage.getItem(VIEW_KEY)) ? localStorage.getItem(VIEW_KEY) : 'list';
+  // Eingeklappte Gruppen der Sammlung bleiben im Browser gespeichert; ein unlesbarer Wert lässt alles aufgeklappt.
+  const collapsedRail = new Set();
+  try { for (const key of JSON.parse(localStorage.getItem(RAIL_KEY) ?? '[]')) if (RAIL_SECTIONS.includes(key)) collapsedRail.add(key); } catch { /* Alles bleibt aufgeklappt. */ }
   // filter.global: ein Tag- oder Themenfilter, der aus einem geöffneten Gedanken kommt, sucht in der ganzen Sammlung.
   const filter = { tag: null, topic: null, query: '', global: false };
   let editingTag = null;
@@ -379,7 +390,8 @@ export function initGedankenraum({ root, getToken }) {
     q('[data-library-toggle]').setAttribute('aria-expanded', String(libraryOpen));
     q('[data-view-select]').value = view;
     detail.hidden = !detailOpen || !idea;
-    rail.innerHTML = spaces.railMarkup() + railMarkup(spaces.contextIdeas(ideas), filter, colorFor);
+    rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
+      + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
     q('[data-undo]').disabled = !canUndo;
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
     const hasFilter = !!(filter.tag || filter.topic || filter.query);
@@ -716,6 +728,15 @@ export function initGedankenraum({ root, getToken }) {
   root.addEventListener('click', async (event) => {
     const target = event.target;
     if (target.closest('[data-library-toggle]')) { libraryOpen = !libraryOpen; render(); return; }
+    const railToggle = target.closest('[data-rail-toggle]');
+    if (railToggle) {
+      const key = railToggle.dataset.railToggle;
+      if (collapsedRail.has(key)) collapsedRail.delete(key); else collapsedRail.add(key);
+      localStorage.setItem(RAIL_KEY, JSON.stringify([...collapsedRail]));
+      render();
+      [...rail.querySelectorAll('[data-rail-toggle]')].find((button) => button.dataset.railToggle === key)?.focus({ preventScroll: true });
+      return;
+    }
     if (target.closest('[data-detail-close]')) { closeDetail(); return; }
     if (target.closest('[data-inline-edit]')) { editInline(); return; }
     if (target.closest('[data-inline-editor]')) return;

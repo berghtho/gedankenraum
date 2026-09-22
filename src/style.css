@@ -74,8 +74,13 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 
 /* Sammlung: Räume, Tags, Themen */
 .ib-rail { display:flex;flex-direction:column;gap:22px;padding:18px;overflow:visible; }
-.ib-rail-head { display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;font:500 8px Consolas,monospace;letter-spacing:.15em;color:var(--ib-dim); }
-.ib-rail-head span { color:var(--ib-faint); }
+.ib-rail-section { min-width:0; }
+.ib-rail .ib-rail-head { display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:0 4px 10px;border:0;border-radius:4px;background:transparent;font:500 8px Consolas,monospace;letter-spacing:.15em;color:var(--ib-dim);text-align:left;cursor:pointer; }
+.ib-rail .ib-rail-head:hover { color:var(--ib-paper); }
+.ib-rail .ib-rail-head[aria-expanded="false"] { padding-bottom:0; }
+.ib-rail-title::before { content:'▾';display:inline-block;width:10px;font-size:9px;letter-spacing:0; }
+.ib-rail-head[aria-expanded="false"] .ib-rail-title::before { content:'▸'; }
+.ib-rail-count { color:var(--ib-faint); }
 .ib-rail-items { display:flex;flex-direction:column;gap:2px; }
 .ib-rail-item { display:flex;align-items:center;border-radius:6px; }
 .ib-rail-item > button:first-child { flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:#a9aaa2;font:400 12px 'Segoe UI',sans-serif;text-align:left;cursor:pointer; }

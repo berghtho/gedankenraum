@@ -7,7 +7,8 @@ verdichten, ordnet sie nach Themen und speichert alles als einfache JSON-Datei.
 
 Die Grundansicht lässt die Gedanken im Vordergrund: oben Titel, Suche, Ansicht und Menü, in der Mitte
 kompakte Karten, unten die Eingabe. Beim Start steht der Cursor bereits in der Eingabe. `Sammlung` öffnet
-Räume, Tags und Themen. Die Ansichtsauswahl wechselt zwischen Gedanken, Mindmap und Zeitachse.
+Räume, Tags und Themen. Jede dieser Gruppen lässt sich über ihre Überschrift ein- und ausklappen; das bleibt
+im Browser gespeichert. Die Ansichtsauswahl wechselt zwischen Gedanken, Mindmap und Zeitachse.
 `Links als Text aufbewahren` liegt im Menü.
 
 Ein Klick auf eine Karte öffnet den Gedanken zum Lesen: zuerst der eigene Wortlaut, darunter Ergänzungen
