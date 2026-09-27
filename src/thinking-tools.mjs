@@ -1,4 +1,4 @@
-import { displayParent, relationLabels } from './mindmap.mjs';
+import { relationLabels } from './mindmap.mjs';
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 export function connectionsMarkup(idea, ideas) {
@@ -16,7 +16,7 @@ export function connectionsMarkup(idea, ideas) {
   return `<section class="ib-related"><div class="ib-section-head"><span class="ib-detail-label">VERBINDUNGEN</span><button class="ib-small-btn" type="button" data-connect-open>+ VERBINDEN</button></div>${parent ? `<button class="ib-parent-link" type="button" data-related-open="${html(parent.id)}">Untergedanke von ${html(parent.title)}</button>` : ''}${rows.join('') || '<p class="ib-tools-note">Verknüpfe Gedanken auch über Themengrenzen hinweg.</p>'}</section>`;
 }
 
-export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify, openInline, newInline }) {
+export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify, openInline, newInline, parentOf = (idea) => idea.parentId ?? null }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'ib-dialog ib-thinking-dialog';
   dialog.setAttribute('aria-labelledby', 'thinking-title');
@@ -45,7 +45,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
   const openNew = (kind, idea = selected()) => {
     if (newInline) { if (idea?.id) mapState.collapsed.delete(idea.id); return newInline(kind, idea); }
     mode = 'new';
-    const parentId = kind === 'child' ? idea?.id : kind === 'sibling' && idea ? displayParent(idea, new Map(snapshot().ideas.map((item) => [item.id, item]))) : null;
+    const parentId = kind === 'child' ? idea?.id : kind === 'sibling' && idea ? parentOf(idea) : null;
     editing = { parentId: parentId ?? null, topic: kind === 'root' ? null : idea?.topic };
     const parent = snapshot().ideas.find((item) => item.id === parentId);
     shell(kind === 'child' ? 'Untergedanke' : kind === 'sibling' ? 'Nachbargedanke' : 'Neuer Gedanke',

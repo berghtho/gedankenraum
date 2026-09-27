@@ -30,7 +30,7 @@ export function initTagCleanup({ root, snapshot, request, render, notify }) {
   const draw = () => {
     const known = counts();
     const ordered = [...known].sort(([, left], [, right]) => right - left).map(([tag]) => tag);
-    const variants = similarTagGroups(ordered).map((tags) => groupMarkup({ into: tags[0], tags }, 'SCHREIBVARIANTEN', known)).join('');
+    const variants = similarTagGroups(ordered).map((tags) => groupMarkup({ into: tags[0], tags }, 'ÄHNLICHE SCHREIBWEISEN · BITTE PRÜFEN', known)).join('');
     const proposals = (suggested ?? []).map((group) => groupMarkup(group, 'VORSCHLAG VON CODEX', known)).join('');
     dialog.innerHTML = `<div class="ib-dialog-head"><div><span>TAGS</span><h2 id="tag-cleanup-title">Tags aufräumen</h2></div><button class="ib-dialog-close" type="button" data-cleanup-close aria-label="Schließen">✕</button></div>
       <p>${ordered.length} Tags. Schreibvarianten erkennt Gedankenraum selbst. Tags, die dasselbe meinen, kann Codex vorschlagen; dafür gehen nur Tag-Namen und ihre Häufigkeit an Codex. Zusammengelegt wird erst per Klick, rückgängig mit Strg+Z.</p>

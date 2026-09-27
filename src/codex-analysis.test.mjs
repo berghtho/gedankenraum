@@ -168,3 +168,27 @@ test('shutdown prevents analysis that is still resolving Codex or starts later',
   await assert.rejects(() => analyzer.analyze(request), /Gedankenraum wird beendet/);
   assert.equal(executed, false);
 });
+
+const generatedRequests = {
+  reflect: { kind: 'questions', sources: [{ id: 'q', input: 'Frage?' }] },
+  research: { source: { id: 'q', input: 'Frage?' } },
+  suggestTagMerges: { tags: [{ name: 'KI', count: 2 }, { name: 'AI', count: 1 }] },
+};
+for (const method of Object.keys(generatedRequests)) {
+  test(`shutdown cancels ${method} and rejects later requests`, async () => {
+    let entered;
+    const started = new Promise((resolve) => { entered = resolve; });
+    const analyzer = createCodexAnalyzer({
+      resolveRuntime: async () => ({ executable: 'codex.exe' }),
+      execute: async ({ signal }) => {
+        entered();
+        await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      },
+    });
+    const pending = analyzer[method](generatedRequests[method]);
+    await started;
+    await analyzer.stop();
+    await assert.rejects(pending, /Gedankenraum wird beendet/);
+    await assert.rejects(() => analyzer[method](generatedRequests[method]), /Gedankenraum wird beendet/);
+  });
+}

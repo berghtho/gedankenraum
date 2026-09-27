@@ -62,11 +62,27 @@ const mergeById = (current = [], incoming = []) => {
   const known = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => { if (known.has(item.id)) return false; known.add(item.id); return true; })];
 };
+
+function normalizeResearchIds(ideas) {
+  // Alte Recherchen verwendeten Zeitstempel als Identität, teils ohne Abschlusszeit.
+  for (const idea of ideas) {
+    const origin = idea.researchOrigin;
+    if (!origin || origin.resultId !== undefined) continue;
+    const research = ideas.find((item) => item.id === origin.ideaId)?.research;
+    const resultId = origin.completedAt ?? (research?.resultId === undefined && research?.completedAt == null ? research?.requestedAt : undefined);
+    if (typeof resultId === 'string') origin.resultId = resultId;
+  }
+  for (const idea of ideas) if (idea.research && idea.research.resultId === undefined) {
+    idea.research.resultId = typeof idea.research.completedAt === 'string' ? idea.research.completedAt : idea.research.requestedAt;
+  }
+  return ideas;
+}
+
 const importedReflections = (items = []) => items.map((item) => item.status === 'pending'
   ? { ...item, status: 'failed', error: 'Unfertige Auswertung importiert. Prüfe die Quellen und starte sie mit „Erneut versuchen“.' }
   : item);
 // Wie bei Auswertungen startet der Import allein keine Übertragung an Codex.
-const importedIdeas = (items = []) => items.map((idea) => idea.research?.status === 'pending'
+const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => idea.research?.status === 'pending'
   ? { ...idea, research: { ...idea.research, status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' } }
   : idea);
 
@@ -110,7 +126,7 @@ export class IdeaBoard {
     return this.#enqueue(async () => {
       const before = this.#read();
       const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#read());
+      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#read(), command.type);
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -210,13 +226,17 @@ export class IdeaBoard {
     return { idea: structuredClone(idea) };
   }
 
-  #remember(before, after) {
+  #remember(before, after, commandType) {
     const patches = [];
+    const undoFields = ['mergeTags', 'renametag'].includes(commandType) ? [...USER_FIELDS, 'keywords'] : USER_FIELDS;
     for (const idea of after.ideas) {
       const previous = before.ideas.find((item) => item.id === idea.id);
       if (!previous) { patches.push({ id: idea.id, captured: true }); continue; }
-      const fields = USER_FIELDS.filter((key) => !equal(previous[key], idea[key]));
-      if (fields.length) patches.push({ id: idea.id, fields: fields.map((key) => ({ key, before: previous[key], after: idea[key] })) });
+      const fields = undoFields.filter((key) => !equal(previous[key], idea[key]));
+      if (fields.length) patches.push({
+        id: idea.id, analysisResultRevision: idea.analysisResultRevision,
+        fields: fields.map((key) => ({ key, before: previous[key], after: idea[key] })),
+      });
     }
     for (const room of after.rooms ?? []) {
       const previous = (before.rooms ?? []).find((item) => item.id === room.id);
@@ -234,11 +254,13 @@ export class IdeaBoard {
     const state = this.#read();
     for (const patch of patches) {
       const idea = (state[patch.collection ?? 'ideas'] ?? []).find((item) => item.id === patch.id);
-      if (!idea || patch.fields?.some((field) => !equal(idea[field.key], field.after))) {
+      if (!idea || patch.fields?.some((field) => field.key !== 'keywords' && !equal(idea[field.key], field.after))) {
         throw new IdeaBoardValidationError('Der Gedanke wurde inzwischen anderweitig geändert.');
       }
       if (patch.captured) idea[patch.collection === 'rooms' ? 'archivedAt' : 'deletedAt'] = this.now().toISOString();
       else for (const field of patch.fields) {
+        // Neuere Analyse-Vorschläge bleiben erhalten; nur die eigenen Tag-Änderungen werden zurückgenommen.
+        if (field.key === 'keywords' && (idea.analysisResultRevision !== patch.analysisResultRevision || !equal(idea.keywords, field.after))) continue;
         if (field.before === undefined) delete idea[field.key];
         else idea[field.key] = structuredClone(field.before);
       }
@@ -254,6 +276,7 @@ export class IdeaBoard {
     idea.analysisRevision = (idea.analysisRevision ?? 0) + 1;
     idea.analysisState = 'pending';
     idea.analysisWarning = null;
+    delete idea.reanalyze;
   }
 
   resumeAnalysis() {
@@ -333,6 +356,7 @@ export class IdeaBoard {
           }
           target.engine = clean(result.engine, 'Lokale Analyse');
           target.analysisState = 'ready';
+          target.analysisResultRevision = revision ?? 0;
           target.analysisWarning = clean(result.warning) || null;
         }
         target.updatedAt = this.now().toISOString();
@@ -440,9 +464,10 @@ export class IdeaBoard {
   async #runResearch(idea) {
     const generation = this.generation;
     const { requestedAt } = idea.research;
+    const source = researchSource(idea);
     let result; let failure;
     try {
-      const value = await this.research({ source: researchSource(idea) });
+      const value = await this.research({ source });
       result = { ...validateResearch(value), engine: clean(value.engine, 'KI-Recherche') };
     } catch (error) { failure = error.message || 'Recherche fehlgeschlagen.'; }
     await this.#enqueue(() => {
@@ -450,8 +475,11 @@ export class IdeaBoard {
       const state = this.#read();
       const target = state.ideas.find((item) => item.id === idea.id && !item.deletedAt);
       if (target?.research?.status !== 'pending' || target.research.requestedAt !== requestedAt) return;
+      if (['input', 'notes', 'title', 'summary', 'keyPoints', 'url'].some((key) => !equal(idea[key], target[key]))) {
+        failure = 'Der Gedanke wurde während der Recherche geändert. Bitte erneut recherchieren.';
+      }
       if (failure) Object.assign(target.research, { status: 'failed', error: failure });
-      else Object.assign(target.research, result, { status: 'ready', error: null, completedAt: this.now().toISOString() });
+      else Object.assign(target.research, result, { resultId: this.makeId(), source, status: 'ready', error: null, completedAt: this.now().toISOString() });
       this.#write(state);
     });
   }
@@ -463,8 +491,11 @@ export class IdeaBoard {
     const research = question.research;
     const finding = research?.findings?.[command.index];
     if (!Number.isInteger(command.index) || command.index < 0 || !finding) throw new IdeaBoardValidationError('Befund wurde nicht gefunden.');
-    const origin = { ideaId: question.id, completedAt: research.completedAt ?? null, index: command.index };
-    const sameOrigin = (idea) => idea.researchOrigin?.ideaId === origin.ideaId && idea.researchOrigin.completedAt === origin.completedAt && idea.researchOrigin.index === origin.index;
+    const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
+    if (typeof command.resultId !== 'string' || command.resultId !== resultId) throw new IdeaBoardValidationError('Die Recherche hat sich geändert. Bitte den aktuellen Befund auswählen.');
+    const origin = { ideaId: question.id, resultId, completedAt: research.completedAt ?? null, index: command.index };
+    const sameOrigin = (idea) => idea.researchOrigin?.ideaId === origin.ideaId
+      && (idea.researchOrigin.resultId ?? idea.researchOrigin.completedAt) === resultId && idea.researchOrigin.index === origin.index;
     const rooms = (state.rooms ?? []).filter((room) => !room.archivedAt && room.ideaIds.includes(question.id));
     const stamp = this.now().toISOString();
     const existing = state.ideas.find(sameOrigin);
@@ -507,6 +538,11 @@ export class IdeaBoard {
     const into = cleanTag(command.into);
     if (tags.length < 2 || !tags.some((tag) => sameTag(tag, into))) throw new IdeaBoardValidationError('Bitte mindestens zwei Tags und ein Ziel aus der Gruppe wählen.');
     const state = this.#read();
+    const changed = this.#replaceTags(state, tags, into);
+    return { tag: into, changed };
+  }
+
+  #replaceTags(state, tags, into) {
     const merged = (tag) => tags.some((item) => sameTag(item, tag));
     const swap = (list) => {
       const next = [];
@@ -518,19 +554,21 @@ export class IdeaBoard {
     };
     const stamp = this.now().toISOString();
     let changed = 0;
+    let found = false;
     for (const idea of state.ideas) {
       if (idea.deletedAt) continue;
+      if (tagsOf(idea).some(merged)) found = true;
       const keywords = swap(idea.keywords ?? []);
-      if (!equal(keywords, idea.keywords ?? [])) idea.keywords = keywords;
+      if (!equal(keywords, idea.keywords ?? [])) { idea.keywords = keywords; idea.updatedAt = stamp; }
       const tagList = swap(tagsOf(idea));
       if (equal(tagList, tagsOf(idea))) continue;
       idea.tags = tagList;
       idea.updatedAt = stamp;
       changed += 1;
     }
-    if (!changed) throw new IdeaBoardValidationError('Tags wurden nicht gefunden.');
+    if (!found) throw new IdeaBoardValidationError('Tag wurde nicht gefunden.');
     this.#write(state);
-    return { tag: into, changed };
+    return changed;
   }
 
   // Alle fertigen Gedanken noch einmal analysieren, etwa nach einem Modellwechsel.
@@ -539,8 +577,9 @@ export class IdeaBoard {
     let queued = 0;
     for (const idea of state.ideas) {
       if (idea.deletedAt || idea.analysisState === 'pending') continue;
-      idea.reanalyze = idea.analysisState === 'failed' ? 'failed' : 'ready';
+      const previousState = idea.analysisState === 'failed' ? 'failed' : 'ready';
       this.#queueIdea(idea);
+      idea.reanalyze = previousState;
       queued += 1;
     }
     if (!queued) throw new IdeaBoardValidationError('Keine Gedanken zum Neu-Analysieren.');
@@ -673,7 +712,7 @@ export class IdeaBoard {
   #retag(command) {
     const state = this.#read();
     const idea = this.#active(state, command.id);
-    // Bestehende Schreibweise eines Tags in der Sammlung übernehmen, damit #ai, #AI und #KI-Agent/#KI-Agenten nicht auseinanderlaufen.
+    // Eindeutige Schreibvarianten angleichen; mögliche Mehrzahlformen bleiben zur Prüfung getrennt.
     idea.tags = preferExistingTags(normalizedTags(command.tags), knownTags(state));
     idea.updatedAt = this.now().toISOString();
     this.#write(state);
@@ -688,23 +727,7 @@ export class IdeaBoard {
     const existing = state.ideas.flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
     const target = existing ?? to;
     const merged = !!existing && !sameTag(from, to);
-    let changed = 0;
-    const updatedAt = this.now().toISOString();
-    for (const idea of state.ideas) {
-      if (idea.deletedAt) continue;
-      const tags = tagsOf(idea);
-      if (!tags.some((tag) => sameTag(tag, from))) continue;
-      const next = [];
-      for (const tag of tags) {
-        const replacement = sameTag(tag, from) ? target : tag;
-        if (!next.some((known) => sameTag(known, replacement))) next.push(replacement);
-      }
-      idea.tags = next;
-      idea.updatedAt = updatedAt;
-      changed += 1;
-    }
-    if (!changed) throw new IdeaBoardValidationError('Tag wurde nicht gefunden.');
-    this.#write(state);
+    const changed = this.#replaceTags(state, [from], target);
     return { ideas: structuredClone(state.ideas), tag: target, merged, changed };
   }
 
@@ -774,6 +797,7 @@ export class IdeaBoard {
   #readFrom(path) {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
     this.#validateState(parsed);
+    normalizeResearchIds(parsed.ideas);
     return parsed;
   }
 
@@ -799,13 +823,15 @@ export class IdeaBoard {
       }
       if (idea.research !== undefined) {
         const research = idea.research;
-        let valid = !!research && typeof research === 'object' && ['pending', 'ready', 'failed'].includes(research.status) && typeof research.requestedAt === 'string';
+        let valid = !!research && typeof research === 'object' && ['pending', 'ready', 'failed'].includes(research.status) && typeof research.requestedAt === 'string'
+          && (research.resultId === undefined || (typeof research.resultId === 'string' && !!research.resultId.trim()));
         if (valid) try { validateResearch(research); } catch { valid = false; }
         if (!valid) throw new IdeaBoardValidationError('Die Datendatei enthält eine ungültige Recherche.');
       }
       if (idea.researchOrigin !== undefined) {
         const origin = idea.researchOrigin;
-        let valid = !!origin && typeof origin.ideaId === 'string' && Number.isInteger(origin.index) && origin.index >= 0;
+        let valid = !!origin && typeof origin.ideaId === 'string' && Number.isInteger(origin.index) && origin.index >= 0
+          && (origin.resultId === undefined || (typeof origin.resultId === 'string' && !!origin.resultId.trim()));
         if (valid) try { validSources(origin.sources); } catch { valid = false; }
         if (!valid) throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Recherche-Befund.');
       }

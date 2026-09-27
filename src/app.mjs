@@ -1,5 +1,5 @@
 const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
-import { displayParent, mindmapMarkup, relationLabels } from './mindmap.mjs';
+import { layoutMindmap, mindmapMarkup, relationLabels } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
@@ -224,8 +224,9 @@ function researchMarkup(idea, ideas) {
   if (!research) return isQuestion(idea) ? `<div class="ib-research-start">${researchButton()}</div>` : '';
   const pending = research.status === 'pending';
   const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
-  const adopted = (index) => ideas.some((other) => other.researchOrigin?.ideaId === idea.id && other.researchOrigin.completedAt === (research.completedAt ?? null) && other.researchOrigin.index === index);
-  const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
+  const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
+  const adopted = (index) => ideas.some((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId && other.researchOrigin.index === index);
+  const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}" data-research-result="${html(resultId)}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
   const closes = research.status === 'ready' && isQuestion(idea) && !idea.answeredAt;
   return `<section class="ib-research">
     <span class="ib-detail-label">RECHERCHE${meta ? ` · ${html(meta)}` : ''}</span>
@@ -502,6 +503,8 @@ export function initGedankenraum({ root, getToken }) {
       render(); return result;
   };
   const clearFilters = () => { filter.tag = null; filter.topic = null; filter.question = null; filter.global = false; searchInput.value = ''; };
+  const displayedParents = () => layoutMindmap(visibleIdeas()).parents;
+  const parentOf = (idea) => displayedParents().get(idea.id) ?? null;
   const cardOf = (id) => [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id) ?? null;
   const focusPanelContent = () => detail.querySelector('[data-detail-focus]')?.focus({ preventScroll: true });
   // Ein Klick liest: Auswahl öffnet den Gedanken. Der Fokus wandert nur per Tastatur in die Ansicht.
@@ -533,12 +536,12 @@ export function initGedankenraum({ root, getToken }) {
         else showMessage('Filter aufgehoben.');
       }
       // Eingeklappte Vorfahren öffnen, auch wenn ein Vorschlag nur über „baut auf“ an seiner Quelle hängt.
-      const byId = new Map(ideas.map((item) => [item.id, item]));
+      const parents = displayedParents();
       const visited = new Set();
-      let parentId = selected() ? displayParent(selected(), byId) : null;
+      let parentId = parents.get(id);
       while (parentId && !visited.has(parentId)) {
         visited.add(parentId); thinking.mapState.collapsed.delete(parentId);
-        parentId = displayParent(byId.get(parentId), byId);
+        parentId = parents.get(parentId);
       }
       render();
       const node = cardOf(id);
@@ -552,7 +555,7 @@ export function initGedankenraum({ root, getToken }) {
   });
   const inline = initInlineThought({
     root, command: runCommand, render, notify: showMessage, selected,
-    parentOf: (idea) => displayParent(idea, new Map(ideas.map((item) => [item.id, item]))),
+    parentOf,
     reveal: (id) => { const open = resumePanel; resumePanel = false; reveal(id, open); },
   });
   const editInline = (idea = selected()) => {
@@ -562,6 +565,7 @@ export function initGedankenraum({ root, getToken }) {
     detailOpen = false; spaces.closeResults(); inline.openEdit(idea);
   };
   const thinking = initThinkingTools({
+    parentOf,
     root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
     render, notify: showMessage, reveal, openInline: editInline,
     newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
@@ -894,7 +898,8 @@ export function initGedankenraum({ root, getToken }) {
         await runCommand({ type: 'research', id: idea.id });
         showMessage('Recherche gestartet. Das Ergebnis erscheint im Gedanken.');
       } else if (target.closest?.('[data-research-accept]')) {
-        await runCommand({ type: 'acceptResearch', id: idea.id, index: Number(target.closest('[data-research-accept]').dataset.researchAccept) });
+        const accept = target.closest('[data-research-accept]');
+        await runCommand({ type: 'acceptResearch', id: idea.id, index: Number(accept.dataset.researchAccept), resultId: accept.dataset.researchResult });
         showMessage('Als Gedanke übernommen. Er baut auf dieser Frage auf.');
       } else if (target.closest?.('[data-question-answered]')) {
         const answered = target.closest('[data-question-answered]').dataset.questionAnswered === 'true';
