@@ -46,13 +46,23 @@ test('capture, retopic and delete use the durable board interface', async () => 
   assert.deepEqual(board.snapshot().ideas, []);
 });
 
-test('tag suggestions and new tags take the spelling of a similar existing tag', async () => {
+test('manual tags and analysis keywords keep unrelated words that resemble plurals', async () => {
+  const board = makeBoard({ analyze: async () => ({ title: 'Reisen', keywords: ['Reisen', 'Reis'] }) });
+  const first = await captureAnalyzed(board, { type: 'capture', input: 'Reis kochen' });
+  await board.execute({ type: 'retag', id: first.idea.id, tags: ['Reis'] });
+  const second = await captureAnalyzed(board, { type: 'capture', input: 'Reisen planen' });
+  const tagged = await board.execute({ type: 'retag', id: second.idea.id, tags: ['Reisen'] });
+  assert.deepEqual(tagged.idea.tags, ['Reisen']);
+  assert.deepEqual(second.idea.keywords, ['Reisen', 'Reis']);
+});
+
+test('exact tag spellings normalize automatically while plural variants remain cleanup suggestions', async () => {
   assert.ok(similarTag('KI-Agent', 'ki agenten'));
   assert.ok(similarTag('LLM', 'LLMs'));
   assert.ok(similarTag('Node.js', 'NodeJS'));
   assert.ok(!similarTag('C++', 'C#'));
   assert.ok(!similarTag('Spiel', 'Spieler'));
-  assert.deepEqual(preferExistingTags(['Agenten', 'agent', 'Neu'], ['Agent']), ['Agent', 'Neu']);
+  assert.deepEqual(preferExistingTags(['Agenten', 'agent', 'Neu'], ['Agent']), ['Agenten', 'Agent', 'Neu']);
   assert.deepEqual(similarTagGroups(['KI-Agenten', 'Kontext', 'ki agent', 'Kontexte', 'Rust']), [['KI-Agenten', 'ki agent'], ['Kontext', 'Kontexte']]);
   let seen;
   const board = makeBoard({ analyze: async (request) => { seen = request; return { title: 'T', summary: 'S', keyPoints: [], keywords: ['coding agents', 'Kontexte', 'Neu'], topic: 'KI' }; } });
@@ -60,11 +70,11 @@ test('tag suggestions and new tags take the spelling of a similar existing tag',
   const second = await captureAnalyzed(board, { type: 'capture', input: 'Zwei' });
   await board.execute({ type: 'retag', id: first.idea.id, tags: ['Coding-Agents', 'Kontext', 'Rust'] });
   const retagged = await board.execute({ type: 'retag', id: second.idea.id, tags: ['kontexte', 'coding agents'] });
-  assert.deepEqual(retagged.idea.tags, ['Kontext', 'Coding-Agents']);
+  assert.deepEqual(retagged.idea.tags, ['kontexte', 'Coding-Agents']);
   const third = await captureAnalyzed(board, { type: 'capture', input: 'Drei' });
-  assert.equal(seen.existingTags.length, 3);
+  assert.equal(seen.existingTags.length, 4);
   assert.equal(seen.existingTags.at(-1), 'Rust');
-  assert.deepEqual(third.idea.keywords, ['Coding-Agents', 'Kontext', 'Neu']);
+  assert.deepEqual(third.idea.keywords, ['Coding-Agents', 'kontexte', 'Neu']);
 });
 
 test('a kept text note stays verbatim, keeps line breaks and is not read as a link', async () => {

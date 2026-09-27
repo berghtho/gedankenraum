@@ -13,6 +13,13 @@ test('link keys ignore protocol, www, trailing slash, anchors, tracking and YouT
   assert.equal(linkKey('keine Adresse'), null);
 });
 
+test('links on distinct non-default ports remain distinct sources', () => {
+  assert.notEqual(linkKey('https://example.org:8000/a'), linkKey('https://example.org:9000/a'));
+  assert.notEqual(linkKey('https://example.org:8000/a'), linkKey('https://example.org/a'));
+  assert.equal(linkKey('https://example.org:443/a'), linkKey('https://example.org/a'));
+  assert.equal(linkKey('http://example.org:80/a'), linkKey('http://example.org/a'));
+});
+
 const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 test('folding lets umlaut spellings, ß and case find each other', () => {

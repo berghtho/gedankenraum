@@ -72,6 +72,92 @@ test('deleting a thought during research drops the late result', async () => {
   assert.equal(board.snapshot().trash[0].research.summary, '');
 });
 
+test('research cannot attach an old answer after the thought changes', async () => {
+  const gate = deferred(); const entered = deferred();
+  const board = boardFor({ research: async () => {
+    entered.resolve(); await gate.promise;
+    return { summary: 'Antwort auf die alte Frage.', findings: [finding] };
+  } });
+  const { idea } = await board.execute({ type: 'capture', input: 'Alte Frage?' });
+  await board.execute({ type: 'research', id: idea.id });
+  await entered.promise;
+  await board.execute({ type: 'edit', id: idea.id, fields: { input: 'Neue Frage?' } });
+  gate.resolve(); await board.whenIdle();
+  const saved = board.snapshot().ideas[0];
+  assert.equal(saved.research.status, 'failed');
+  assert.equal(saved.research.summary, '');
+  assert.match(saved.research.error, /geändert/);
+});
+
+test('adopting research rejects a result replaced since it was displayed', async () => {
+  let text = 'Erster Befund';
+  const board = boardFor({
+    now: () => new Date('2026-09-27T12:00:00Z'),
+    research: async () => ({ summary: text, findings: [{ ...finding, text }] }),
+  });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.execute({ type: 'research', id: idea.id }); await board.whenIdle();
+  const displayed = board.snapshot().ideas[0].research;
+  text = 'Zweiter Befund';
+  await board.execute({ type: 'research', id: idea.id }); await board.whenIdle();
+  await assert.rejects(() => board.execute({
+    type: 'acceptResearch', id: idea.id, index: 0, resultId: displayed.resultId ?? displayed.completedAt,
+  }), /Recherche.*geändert/);
+  const current = board.snapshot().ideas[0].research;
+  const accepted = await board.execute({ type: 'acceptResearch', id: idea.id, index: 0, resultId: current.resultId });
+  assert.equal(accepted.idea.input, 'Zweiter Befund');
+});
+
+test('legacy research findings remain adoptable once after import and restart', async () => {
+  const board = boardFor();
+  const completedAt = '2026-09-26T12:00:00.000Z';
+  await board.importState({ version: 1, ideas: [{
+    id: 'legacy', title: 'Alte Frage?', input: 'Alte Frage?', source: 'note', analysisState: 'ready',
+    research: { status: 'ready', requestedAt: completedAt, completedAt, summary: 'Antwort', findings: [finding] },
+  }] });
+  const accepted = await board.execute({ type: 'acceptResearch', id: 'legacy', index: 0, resultId: completedAt });
+  const reopened = boardFor({ path: board.path });
+  assert.equal((await reopened.execute({ type: 'acceptResearch', id: 'legacy', index: 0, resultId: completedAt })).idea.id, accepted.idea.id);
+  assert.equal(reopened.snapshot().ideas.length, 2);
+});
+
+for (const splitImport of [false, true]) test(`legacy findings without a completion date are not duplicated after ${splitImport ? 'a split' : 'a full'} import`, async () => {
+  const board = boardFor();
+  const requestedAt = '2026-09-26T12:00:00.000Z';
+  const legacy = { version: 1, ideas: [{
+    id: 'legacy', title: 'Alte Frage?', input: 'Alte Frage?', source: 'note', analysisState: 'ready',
+    research: { status: 'ready', requestedAt, summary: 'Antwort', findings: [finding] },
+  }, {
+    id: 'adopted', title: finding.text, input: finding.text, source: 'text', analysisState: 'ready',
+    researchOrigin: { ideaId: 'legacy', completedAt: null, index: 0, sources: finding.sources },
+  }] };
+  if (splitImport) {
+    await board.importState({ version: 1, ideas: [legacy.ideas[0]] });
+    await board.execute({ type: 'retag', id: 'legacy', tags: ['Gespeichert'] });
+  }
+  await board.importState(legacy);
+  const reopened = boardFor({ path: board.path });
+  assert.equal((await reopened.execute({ type: 'acceptResearch', id: 'legacy', index: 0, resultId: requestedAt })).idea.id, 'adopted');
+  assert.equal(reopened.snapshot().ideas.length, 2);
+  await reopened.execute({ type: 'research', id: 'legacy' }); await reopened.whenIdle();
+  const resultId = reopened.snapshot().ideas.find((idea) => idea.id === 'legacy').research.resultId;
+  const accepted = await reopened.execute({ type: 'acceptResearch', id: 'legacy', index: 0, resultId });
+  assert.notEqual(accepted.idea.id, 'adopted');
+  assert.equal(reopened.snapshot().ideas.length, 3);
+});
+
+test('unrelated tag changes do not discard research and the researched source stays recorded', async () => {
+  const gate = deferred(); const entered = deferred();
+  const board = boardFor({ research: async () => { entered.resolve(); await gate.promise; return { summary: 'Antwort', findings: [finding] }; } });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.execute({ type: 'research', id: idea.id }); await entered.promise;
+  await board.execute({ type: 'retag', id: idea.id, tags: ['Neu'] });
+  gate.resolve(); await board.whenIdle();
+  const research = board.snapshot().ideas[0].research;
+  assert.equal(research.status, 'ready');
+  assert.equal(research.source.input, 'Frage?');
+});
+
 test('imported pending research waits for an explicit start and invalid research is rejected', async () => {
   const donor = boardFor(); donor.stop();
   const { idea } = await donor.execute({ type: 'capture', input: 'Frage?' });

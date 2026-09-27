@@ -1,6 +1,6 @@
 import { fold } from './search.mjs';
 
-// Schreibvarianten zählen als derselbe Tag: Groß-/Kleinschreibung, Umlaute, Trennzeichen und einfache Mehrzahl.
+// Mehrzahl-Ähnlichkeit liefert nur Vorschläge: etwa Reis/Reisen kann etwas anderes bedeuten.
 const tagKey = (value) => fold(value).replace(/[\s\-_./·]+/g, '');
 const PLURAL_ENDINGS = ['s', 'e', 'n', 'en', 'es', 'nen'];
 export const similarTag = (left, right) => {
@@ -8,12 +8,12 @@ export const similarTag = (left, right) => {
   return short === long || (short.length >= 3 && long.startsWith(short) && PLURAL_ENDINGS.includes(long.slice(short.length)));
 };
 
-// Ein ähnlicher bestehender Tag gewinnt mit seiner Schreibweise, statt eine neue Variante anzulegen.
+// Automatisch nur Groß-/Kleinschreibung, Umlaute und Trennzeichen angleichen.
 export function preferExistingTags(words, known) {
   const tags = [];
   for (const word of words) {
-    const tag = known.find((candidate) => similarTag(candidate, word)) ?? word;
-    if (!tags.some((item) => similarTag(item, tag))) tags.push(tag);
+    const tag = known.find((candidate) => tagKey(candidate) === tagKey(word)) ?? word;
+    if (!tags.some((item) => tagKey(item) === tagKey(tag))) tags.push(tag);
   }
   return tags;
 }

@@ -6,7 +6,7 @@ const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '
 // Übernommene Vorschläge und Recherche-Befunde hängen in der Mindmap an dem ersten sichtbaren Gedanken,
 // auf dem sie aufbauen. Ein selbst gesetzter Elternknoten geht vor; gespeichert wird dabei nichts.
 export function displayParent(idea, byId) {
-  if (idea.parentId && idea.parentId !== idea.id && byId.has(idea.parentId)) return idea.parentId;
+  if (idea.parentId) return idea.parentId !== idea.id && byId.has(idea.parentId) ? idea.parentId : null;
   if (!isDerived(idea)) return null;
   return (idea.relations ?? []).find((edge) => edge.type === 'builds' && edge.targetId !== idea.id && byId.has(edge.targetId))?.targetId ?? null;
 }
@@ -28,11 +28,13 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
   }
   const nodes = [];
   const edges = [];
+  const parents = new Map();
   const visited = new Set();
   let row = 0;
   const visit = (idea, depth, parent = null, hidden = false) => {
     if (visited.has(idea.id)) return;
     visited.add(idea.id);
+    parents.set(idea.id, parent?.idea.id ?? null);
     const node = { idea, x: 32 + depth * 300, y: 32 + row * 112, children: (children.get(idea.id) ?? []).length };
     if (!hidden) {
       nodes.push(node);
@@ -44,7 +46,7 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
   };
   for (const idea of roots) visit(idea, 0);
   for (const idea of ideas) if (!visited.has(idea.id)) visit(idea, 0);
-  return { nodes, edges, width: Math.max(600, ...nodes.map((node) => node.x + 288)), height: Math.max(380, row * 112 + 64) };
+  return { nodes, edges, parents, width: Math.max(600, ...nodes.map((node) => node.x + 288)), height: Math.max(380, row * 112 + 64) };
 }
 
 export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) {

@@ -173,6 +173,40 @@ test('adopted suggestions and findings sit to the right of the thought they buil
   assert.match(mindmapMarkup(ideas, null, () => '#fff', { collapsed: new Set(), zoom: 1 }), /class="ib-mm-derived"/);
 });
 
+test('an adopted thought with a filtered explicit parent becomes a root instead of moving under a source', () => {
+  const visible = [
+    { id: 'source', title: 'Sichtbare Quelle' },
+    { id: 'adopted', title: 'Verschobener Gedanke', parentId: 'hidden', reflectionOrigin: { id: 'r', index: 0 }, relations: [{ targetId: 'source', type: 'builds' }] },
+  ];
+  const layout = layoutMindmap(visible);
+  assert.equal(layout.nodes.find((node) => node.idea.id === 'adopted').x, 32);
+  assert.equal(layout.edges.length, 0);
+});
+
+test('filtered mindmaps keep the visible source as parent for collapsed thoughts and new neighbors', async () => {
+  const board = fixture();
+  await board.importState({ version: 1, ideas: [
+    { id: 'hidden', title: 'Andere Quelle', analysisState: 'ready' },
+    { id: 'visible', title: 'Quelle im Raum', analysisState: 'ready' },
+    { id: 'adopted', title: 'Vorschlag', analysisState: 'ready', reflectionOrigin: { id: 'r', index: 0 }, relations: [
+      { targetId: 'hidden', type: 'builds' }, { targetId: 'visible', type: 'builds' },
+    ] },
+  ] });
+  const room = (await board.execute({ type: 'roomCreate', question: 'Dieser Raum' })).room;
+  await board.execute({ type: 'roomMembers', id: room.id, add: ['visible', 'adopted'] });
+  const roomIdeas = () => {
+    const state = board.snapshot();
+    return state.ideas.filter((idea) => state.rooms[0].ideaIds.includes(idea.id));
+  };
+  const layout = layoutMindmap(roomIdeas(), new Set(['visible']));
+  assert.equal(layout.parents?.get('adopted'), 'visible');
+  const sibling = (await board.execute({ type: 'capture', input: 'Nachbar', parentId: layout.parents.get('adopted'), roomId: room.id })).idea;
+  const expanded = layoutMindmap(roomIdeas());
+  assert.equal(expanded.nodes.find((node) => node.idea.id === sibling.id).x, 332);
+  assert.equal(expanded.nodes.find((node) => node.idea.id === 'adopted').x, 332);
+  await board.whenIdle();
+});
+
 test('active-only commands do not alter trash and malformed optional graph fields cannot be imported', async () => {
   const board = fixture();
   const { idea } = await board.execute({ type: 'capture', input: 'Aufbewahren' });

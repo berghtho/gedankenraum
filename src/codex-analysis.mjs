@@ -187,6 +187,16 @@ export function createCodexAnalyzer({
     });
     return runtimePromise;
   };
+  const invoke = async (options) => {
+    if (stopped) throw new Error('Gedankenraum wird beendet');
+    const controller = new AbortController();
+    active.add(controller);
+    try {
+      const resolvedRuntime = await runtime();
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return await execute({ ...options, runtime: resolvedRuntime, signal: controller.signal });
+    } finally { active.delete(controller); }
+  };
   return {
     async status() {
       try {
@@ -197,61 +207,29 @@ export function createCodexAnalyzer({
       }
     },
     async analyze(request) {
-      if (stopped) throw new Error('Gedankenraum wird beendet');
-      const controller = new AbortController();
-      active.add(controller);
       try {
-        const resolvedRuntime = await runtime();
-        if (controller.signal.aborted) throw controller.signal.reason;
-        const analysis = await execute({
-          runtime: resolvedRuntime,
-          prompt: promptFor(request),
-          signal: controller.signal,
-        });
+        const analysis = await invoke({ prompt: promptFor(request) });
         return { analysis, engine: ENGINE };
       } catch (error) {
-        if (controller.signal.aborted) throw error;
+        if (stopped) throw error;
         const result = await fallback.analyze(request);
         return {
           ...result,
           warning: `Codex war nicht verfügbar: ${error.message}. Lokale Analyse wurde verwendet.`,
         };
-      } finally {
-        active.delete(controller);
       }
     },
     async reflect(request) {
-      if (stopped) throw new Error('Gedankenraum wird beendet');
-      const controller = new AbortController();
-      active.add(controller);
-      try {
-        const resolvedRuntime = await runtime();
-        if (controller.signal.aborted) throw controller.signal.reason;
-        const value = await execute({ runtime: resolvedRuntime, prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA, signal: controller.signal });
-        return { ...validateReflection(value, request.sources.map((source) => source.id), request.kind), engine: ENGINE };
-      } finally { active.delete(controller); }
+      const value = await invoke({ prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA });
+      return { ...validateReflection(value, request.sources.map((source) => source.id), request.kind), engine: ENGINE };
     },
     async research(request) {
-      if (stopped) throw new Error('Gedankenraum wird beendet');
-      const controller = new AbortController();
-      active.add(controller);
-      try {
-        const resolvedRuntime = await runtime();
-        if (controller.signal.aborted) throw controller.signal.reason;
-        const value = await execute({ runtime: resolvedRuntime, prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, timeoutMs: 15 * 60_000, signal: controller.signal });
-        return { ...validateResearch(value), engine: ENGINE };
-      } finally { active.delete(controller); }
+      const value = await invoke({ prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, timeoutMs: 15 * 60_000 });
+      return { ...validateResearch(value), engine: ENGINE };
     },
     async suggestTagMerges(request) {
-      if (stopped) throw new Error('Gedankenraum wird beendet');
-      const controller = new AbortController();
-      active.add(controller);
-      try {
-        const resolvedRuntime = await runtime();
-        if (controller.signal.aborted) throw controller.signal.reason;
-        const value = await execute({ runtime: resolvedRuntime, prompt: tagMergePrompt(request), schema: TAG_MERGE_SCHEMA, signal: controller.signal });
-        return { ...validateTagMerges(value, request.tags.map((tag) => tag.name)), engine: ENGINE };
-      } finally { active.delete(controller); }
+      const value = await invoke({ prompt: tagMergePrompt(request), schema: TAG_MERGE_SCHEMA });
+      return { ...validateTagMerges(value, request.tags.map((tag) => tag.name)), engine: ENGINE };
     },
     async stop() {
       stopped = true;

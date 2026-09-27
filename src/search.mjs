@@ -137,5 +137,5 @@ export function linkKey(value) {
       : host === 'youtube.com' && path === '/watch' ? url.searchParams.get('v') : null;
   if (video) { host = 'youtube.com'; path = '/watch'; params = [['v', video]]; }
   params.sort(([left], [right]) => left.localeCompare(right));
-  return `${host}${path}${params.length ? `?${new URLSearchParams(params)}` : ''}`;
+  return `${host}${url.port ? `:${url.port}` : ''}${path}${params.length ? `?${new URLSearchParams(params)}` : ''}`;
 }
