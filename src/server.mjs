@@ -173,6 +173,10 @@ export function createGedankenraumServer({
     ['/workspace-ui.mjs', { path: join(sourceHome, 'workspace-ui.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/inline-thought.mjs', { path: join(sourceHome, 'inline-thought.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/search.mjs', { path: join(sourceHome, 'search.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/tag-match.mjs', { path: join(sourceHome, 'tag-match.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/tag-cleanup.mjs', { path: join(sourceHome, 'tag-cleanup.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/thought-kinds.mjs', { path: join(sourceHome, 'thought-kinds.mjs'), type: 'text/javascript; charset=utf-8' }],
+    ['/room-summary.mjs', { path: join(sourceHome, 'room-summary.mjs'), type: 'text/javascript; charset=utf-8' }],
     ['/style.css', { path: join(sourceHome, 'style.css'), type: 'text/css; charset=utf-8' }],
   ]);
 
@@ -250,6 +254,18 @@ export function createGedankenraumServer({
         const refusal = guard(req);
         if (refusal) return writeJson(res, 403, { error: refusal });
         return writeJson(res, 200, await board.execute(await readBody(req, 256 * 1024)));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/tags/suggest') {
+        const refusal = guard(req);
+        if (refusal) return writeJson(res, 403, { error: refusal });
+        await readBody(req);
+        if (!analyzer.suggestTagMerges) throw new IdeaBoardValidationError('Tag-Vorschläge sind nicht verfügbar.');
+        // Nur Tag-Namen und Häufigkeiten aus der Sammlung gehen an Codex, keine Gedanken.
+        const counts = new Map();
+        for (const idea of board.snapshot().ideas) for (const tag of idea.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+        if (counts.size < 2) return writeJson(res, 200, { groups: [] });
+        const tags = [...counts].sort(([, left], [, right]) => right - left).map(([name, count]) => ({ name, count }));
+        return writeJson(res, 200, await analyzer.suggestTagMerges({ tags }));
       }
       if (req.method === 'POST' && url.pathname === '/api/ideas/import') {
         const refusal = guard(req);

@@ -46,18 +46,21 @@ const webUrl = (value) => {
 };
 
 // Nur http(s)-Quellen werden gespeichert; sie erscheinen später als Links im Gedanken.
+export function validSources(sources) {
+  if (!Array.isArray(sources) || !sources.length || sources.length > 4) throw new Error('Ungültige KI-Recherche.');
+  return sources.map((source) => {
+    const url = typeof source?.url === 'string' && source.url.length <= 2000 ? webUrl(source.url) : null;
+    if (!url || typeof source.title !== 'string' || source.title.length > 200) throw new Error('Die KI-Recherche enthält ungültige Quellen.');
+    return { title: source.title.trim() || new URL(url).hostname, url };
+  });
+}
+
 export function validateResearch(value) {
   if (!value || typeof value.summary !== 'string' || value.summary.length > 1200
     || !Array.isArray(value.findings) || value.findings.length > 6) throw new Error('Ungültige KI-Recherche.');
   const findings = value.findings.map((finding) => {
-    if (!finding || typeof finding.text !== 'string' || !finding.text.trim() || finding.text.length > 1200
-      || !Array.isArray(finding.sources) || !finding.sources.length || finding.sources.length > 4) throw new Error('Ungültige KI-Recherche.');
-    const sources = finding.sources.map((source) => {
-      const url = typeof source?.url === 'string' && source.url.length <= 2000 ? webUrl(source.url) : null;
-      if (!url || typeof source.title !== 'string' || source.title.length > 200) throw new Error('Die KI-Recherche enthält ungültige Quellen.');
-      return { title: source.title.trim() || new URL(url).hostname, url };
-    });
-    return { text: finding.text.trim(), sources };
+    if (!finding || typeof finding.text !== 'string' || !finding.text.trim() || finding.text.length > 1200) throw new Error('Ungültige KI-Recherche.');
+    return { text: finding.text.trim(), sources: validSources(finding.sources) };
   });
   return { summary: value.summary.trim(), findings };
 }

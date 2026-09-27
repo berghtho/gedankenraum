@@ -121,3 +121,21 @@ export const hostOf = (url) => {
 export const pathOf = (url) => {
   try { const parsed = new URL(url); const path = `${parsed.pathname}${parsed.search}`; return path === '/' ? '' : path; } catch { return ''; }
 };
+
+// Derselbe Link in anderer Schreibweise: http/https, www, Schluss-Slash, Anker, Tracking-Parameter
+// und YouTube-Kurzlinks, Shorts oder Zeitmarken führen auf denselben Schlüssel.
+const TRACKING = /^(utm_\w+|fbclid|gclid|igshid|mc_cid|mc_eid)$/i;
+export function linkKey(value) {
+  let url;
+  try { url = new URL(String(value ?? '').trim()); } catch { return null; }
+  if (!['http:', 'https:'].includes(url.protocol)) return null;
+  let host = url.hostname.toLowerCase().replace(/^(www|m)\./, '');
+  let path = url.pathname.replace(/\/+$/, '');
+  let params = [...url.searchParams].filter(([key]) => !TRACKING.test(key));
+  const video = host === 'youtu.be' ? path.slice(1)
+    : host === 'youtube.com' && path.startsWith('/shorts/') ? path.slice(8)
+      : host === 'youtube.com' && path === '/watch' ? url.searchParams.get('v') : null;
+  if (video) { host = 'youtube.com'; path = '/watch'; params = [['v', video]]; }
+  params.sort(([left], [right]) => left.localeCompare(right));
+  return `${host}${path}${params.length ? `?${new URLSearchParams(params)}` : ''}`;
+}

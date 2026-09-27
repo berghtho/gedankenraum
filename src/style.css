@@ -22,6 +22,8 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 .ib-room-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 [data-room-leave] { flex:none;width:28px;height:28px;padding:0;border:1px solid var(--ib-line);border-radius:8px;background:transparent;color:#a9afa0;font-size:16px;line-height:1;cursor:pointer; }
 [data-room-leave]:hover { border-color:var(--ib-line-strong);color:var(--ib-paper); }
+.ib-room-title [data-room-overview] { flex:none;height:28px;padding:0 10px;border:1px solid var(--ib-line);border-radius:8px;background:transparent;color:#a9afa0;font:12px 'Segoe UI',sans-serif;cursor:pointer; }
+.ib-room-title [data-room-overview]:hover { border-color:var(--ib-line-strong);color:var(--ib-paper); }
 .ib-search { width:230px;height:34px;display:flex;align-items:center;gap:10px;padding:0 12px;border:1px solid transparent;border-radius:10px;background:#ffffff06; }
 .ib-search:focus-within { border-color:var(--ib-line-strong);background:#ffffff0a; }
 .ib-search span { color:var(--ib-muted); }
@@ -95,6 +97,8 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 .ib-rail-more:hover { background:rgba(255,255,255,.08);color:var(--ib-paper); }
 .ib-topic-dot { width:6px;height:6px;border-radius:2px;flex:none; }
 .ib-rail-empty,.ib-tools-note { padding:6px 8px;color:#969a8d;font-size:12px;line-height:1.6; }
+.ib-rail-action { margin-top:4px;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:var(--ib-dim);font:500 9px Consolas,monospace;letter-spacing:.08em;text-align:left;cursor:pointer; }
+.ib-rail-action:hover { background:rgba(255,255,255,.04);color:var(--ib-paper); }
 [data-open-room].is-drop-target { outline:2px solid var(--ib-lime);background:#35432a;border-radius:6px; }
 
 /* Liste: kompakte Karten, Treffer sichtbar */
@@ -205,7 +209,13 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 .ib-research-sources a { max-width:100%;padding:2px 8px;border:1px solid var(--ib-line);border-radius:999px;color:#bac89f;font:10px Consolas,monospace;text-decoration:none;overflow-wrap:anywhere; }
 .ib-research-sources a:hover { border-color:var(--ib-line-strong);color:var(--ib-paper); }
 .ib-research-sources a:focus-visible { outline:2px solid var(--ib-lime);outline-offset:2px; }
-.ib-research>.ib-small-btn { margin-top:4px; }
+.ib-research-actions { display:flex;flex-wrap:wrap;gap:8px;margin-top:4px; }
+.ib-finding-adopt { display:block;margin-top:6px;padding:0;border:0;background:transparent;color:var(--ib-dim);font:500 8px Consolas,monospace;letter-spacing:.1em;cursor:pointer; }
+.ib-finding-adopt:hover:not(:disabled) { color:#b9b1dc; }
+.ib-finding-adopt:disabled { cursor:default;opacity:.6; }
+.ib-origin-sources { display:flex;flex-direction:column;gap:6px;margin-top:14px; }
+.ib-question-bar { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin:0 0 14px;padding:8px 10px 8px 12px;border:1px solid #4d5a3a;border-radius:8px;background:#d5ff6508;color:#cfe3a8;font:500 9px Consolas,monospace;letter-spacing:.12em; }
+.ib-question-bar.is-answered { border-color:var(--ib-line);background:transparent;color:var(--ib-dim); }
 .ib-related-rows { margin-top:10px;display:flex;flex-direction:column;gap:4px; }
 .ib-related-row { display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:rgba(255,255,255,.03);color:#c9c9c0;text-align:left;cursor:pointer; }
 .ib-related-row:hover { background:rgba(255,255,255,.06); }
@@ -339,6 +349,28 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 .ib-member-list>label>span { min-width:0;overflow-wrap:anywhere; }
 .ib-member-list small { display:block;margin-top:4px;color:#99a68c;font-size:11px; }
 .ib-archive-row { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0; }
+.ib-merge-list { display:flex;flex-direction:column;gap:10px;margin:16px 24px 0;max-height:50vh;overflow:auto; }
+.ib-merge-list>.ib-dialog-note { padding:0; }
+.ib-merge-group { margin:0;padding:12px 14px;border:1px solid var(--ib-line);border-radius:10px; }
+.ib-merge-group legend { padding:0 6px;color:var(--ib-dim);font:500 8px Consolas,monospace;letter-spacing:.12em; }
+.ib-merge-tags { display:flex;flex-wrap:wrap;gap:6px 14px; }
+.ib-merge-tags label { display:inline-flex;align-items:center;gap:6px;color:var(--ib-paper);font:500 11px Consolas,monospace;cursor:pointer; }
+.ib-merge-tags input { accent-color:var(--ib-lime); }
+.ib-merge-tags small { color:var(--ib-faint); }
+.ib-merge-row { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:10px; }
+.ib-merge-row label { display:flex;align-items:center;gap:8px;color:var(--ib-dim);font:500 8px Consolas,monospace;letter-spacing:.12em; }
+.ib-merge-row select { padding:5px 8px;border:1px solid #515449;border-radius:7px;background:#11120f;color:var(--ib-paper);font:12px 'Segoe UI',sans-serif; }
+.ib-overview-actions { display:flex;flex-wrap:wrap;gap:8px;padding:0 24px 12px; }
+.ib-room-overview { max-height:max(160px,calc(90vh - 240px));overflow:auto;padding:0 24px; }
+.ib-room-overview>.ib-dialog-note { padding:0; }
+.ib-room-overview section { margin-top:16px;padding-top:12px;border-top:1px solid var(--ib-line); }
+.ib-room-overview h3 { margin:0 0 8px;color:var(--ib-dim);font:500 8px Consolas,monospace;letter-spacing:.14em;text-transform:uppercase; }
+.ib-room-overview ul { margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px; }
+.ib-room-overview li { display:flex;flex-direction:column;gap:2px; }
+.ib-room-overview li>button,.ib-room-overview li>a { padding:0;border:0;background:transparent;color:#d8d8cf;font:13px/1.5 'Segoe UI',sans-serif;text-align:left;text-decoration:none;cursor:pointer;overflow-wrap:anywhere; }
+.ib-room-overview li>button:hover,.ib-room-overview li>a:hover { color:var(--ib-paper);text-decoration:underline; }
+.ib-room-overview li>span { color:#b9bbb1;font-size:13px;line-height:1.5; }
+.ib-room-overview small { color:var(--ib-muted);font-size:11.5px;line-height:1.5; }
 .stopped { min-height:100vh;display:grid;place-content:center;gap:8px;text-align:center;color:#ecebe3;font:18px 'Segoe UI',sans-serif; }
 .stopped span { color:#92958b;font-size:13px; }
 

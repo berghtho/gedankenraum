@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fold, foldMap, hitsIn, hostOf, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, windowAround } from './search.mjs';
+
+test('link keys ignore protocol, www, trailing slash, anchors, tracking and YouTube variants', () => {
+  const video = linkKey('https://www.youtube.com/watch?v=abc123&t=42s&si=xyz');
+  for (const variant of ['http://youtube.com/watch?v=abc123', 'https://youtu.be/abc123?si=share', 'https://m.youtube.com/watch?v=abc123&list=PL1', 'https://www.youtube.com/shorts/abc123']) assert.equal(linkKey(variant), video, variant);
+  assert.equal(linkKey('https://Example.com/a/?utm_source=x&b=2&a=1#top'), linkKey('http://example.com/a?a=1&b=2'));
+  assert.notEqual(linkKey('https://example.com/a?page=2'), linkKey('https://example.com/a?page=3'));
+  assert.equal(linkKey('https://example.com/'), linkKey('https://www.example.com'));
+  assert.equal(linkKey('javascript:alert(1)'), null);
+  assert.equal(linkKey('keine Adresse'), null);
+});
 
 const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { IdeaBoard, IdeaBoardValidationError, preferExistingTags, similarTag } from './idea-board.mjs';
+import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
+import { preferExistingTags, similarTag, similarTagGroups } from './tag-match.mjs';
 
 let sequence = 0;
 const makeBoard = (overrides = {}) => new IdeaBoard({
@@ -52,6 +53,7 @@ test('tag suggestions and new tags take the spelling of a similar existing tag',
   assert.ok(!similarTag('C++', 'C#'));
   assert.ok(!similarTag('Spiel', 'Spieler'));
   assert.deepEqual(preferExistingTags(['Agenten', 'agent', 'Neu'], ['Agent']), ['Agent', 'Neu']);
+  assert.deepEqual(similarTagGroups(['KI-Agenten', 'Kontext', 'ki agent', 'Kontexte', 'Rust']), [['KI-Agenten', 'ki agent'], ['Kontext', 'Kontexte']]);
   let seen;
   const board = makeBoard({ analyze: async (request) => { seen = request; return { title: 'T', summary: 'S', keyPoints: [], keywords: ['coding agents', 'Kontexte', 'Neu'], topic: 'KI' }; } });
   const first = await captureAnalyzed(board, { type: 'capture', input: 'Eins' });

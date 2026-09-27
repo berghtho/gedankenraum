@@ -51,6 +51,33 @@ test('authenticated HTTP room and reflection workflow persists sources and accep
   } finally { await new Promise((resolve) => app.server.close(resolve)); }
 });
 
+test('tag suggestions send only tag names with their counts and need a session', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-tags-http-'));
+  let seen;
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: {
+    ...createLocalAnalyzer(), suggestTagMerges: async (request) => { seen = request; return { groups: [{ into: 'KI', tags: ['KI', 'AI'], reason: 'Übersetzung' }], engine: 'Test' }; },
+  } });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+  const post = (path, body) => fetch(`${origin}${path}`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: JSON.stringify(body) });
+  try {
+    const a = (await (await post('/api/ideas/execute', { type: 'capture', input: 'Geheimer Gedanke' })).json()).idea;
+    const b = (await (await post('/api/ideas/execute', { type: 'capture', input: 'Noch ein Gedanke' })).json()).idea;
+    await post('/api/ideas/execute', { type: 'retag', id: a.id, tags: ['KI', 'AI'] });
+    await post('/api/ideas/execute', { type: 'retag', id: b.id, tags: ['KI'] });
+    const response = await post('/api/tags/suggest', {});
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).groups[0].tags, ['KI', 'AI']);
+    assert.deepEqual(seen.tags, [{ name: 'KI', count: 2 }, { name: 'AI', count: 1 }]);
+    assert.ok(!JSON.stringify(seen).includes('Geheimer'));
+    const refused = await fetch(`${origin}/api/tags/suggest`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(refused.status, 403);
+  } finally {
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});
+
 test('Windows data lives below LOCALAPPDATA unless explicitly configured', () => {
   assert.equal(
     defaultStatePath({ LOCALAPPDATA: 'C:\\Users\\Test\\AppData\\Local' }, 'win32'),
@@ -209,7 +236,7 @@ test('HTTP capture returns persisted pending data while analysis waits; edits an
     assert.equal(deleted.trash.length, 1);
     const restored = await post({ type: 'undo' });
     assert.equal(restored.ideas[0].title, 'Mein Titel');
-    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs', 'search.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
+    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs', 'search.mjs', 'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
   } finally {
     release();
     app.server.closeAllConnections();

@@ -3,8 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
-import { researchSource, validateResearch } from './research-analysis.mjs';
-import { fold } from './search.mjs';
+import { researchSource, validateResearch, validSources } from './research-analysis.mjs';
+import { preferExistingTags } from './tag-match.mjs';
 
 const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
@@ -34,24 +34,6 @@ function normalizedTags(value) {
 
 const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 
-// Schreibvarianten zählen als derselbe Tag: Groß-/Kleinschreibung, Umlaute, Trennzeichen und einfache Mehrzahl.
-const tagKey = (value) => fold(value).replace(/[\s\-_./·]+/g, '');
-const PLURAL_ENDINGS = ['s', 'e', 'n', 'en', 'es', 'nen'];
-export const similarTag = (left, right) => {
-  const [short, long] = [tagKey(left), tagKey(right)].sort((a, b) => a.length - b.length);
-  return short === long || (short.length >= 3 && long.startsWith(short) && PLURAL_ENDINGS.includes(long.slice(short.length)));
-};
-
-// Ein ähnlicher bestehender Tag gewinnt mit seiner Schreibweise, statt eine neue Variante anzulegen.
-export function preferExistingTags(words, known) {
-  const tags = [];
-  for (const word of words) {
-    const tag = known.find((candidate) => similarTag(candidate, word)) ?? word;
-    if (!tags.some((item) => similarTag(item, tag))) tags.push(tag);
-  }
-  return tags;
-}
-
 // Häufig genutzte Tags zuerst: Sie gehen so an die Analyse und gewinnen bei Schreibvarianten.
 const knownTags = (state) => {
   const counts = new Map();
@@ -74,7 +56,7 @@ function normalizedAnalysis(value, fallbackTitle) {
 
 const emptyState = () => ({ version: 1, ideas: [] });
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
-const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt'];
+const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const mergeById = (current = [], incoming = []) => {
   const known = new Set(current.map((item) => item.id));
@@ -128,7 +110,7 @@ export class IdeaBoard {
     return this.#enqueue(async () => {
       const before = this.#read();
       const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research'].includes(command.type)) this.#remember(before, this.#read());
+      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#read());
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -158,6 +140,11 @@ export class IdeaBoard {
     if (command.type === 'reflect') return this.#startReflection(command);
     if (command.type === 'acceptReflection') return this.#acceptReflection(command);
     if (command.type === 'research') return this.#startResearch(command);
+    if (command.type === 'acceptResearch') return this.#acceptResearch(command);
+    if (command.type === 'answer') return this.#answer(command);
+    if (command.type === 'mergeTags') return this.#mergeTags(command);
+    if (command.type === 'reanalyzeAll') return this.#reanalyzeAll();
+    if (command.type === 'cancelReanalysis') return this.#cancelReanalysis();
     if (command.type === 'retryReflection') {
       const state = this.#read();
       const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
@@ -326,6 +313,15 @@ export class IdeaBoard {
         const current = this.#read();
         const target = current.ideas.find((item) => item.id === idea.id);
         if (!target || target.deletedAt || target.analysisRevision !== revision || target.analysisState !== 'pending') return;
+        const refresh = target.reanalyze === 'ready';
+        delete target.reanalyze;
+        if (refresh && (failure || result.warning)) {
+          // Eine Neu-Analyse ersetzt eine fertige Analyse nie durch einen Fehler oder die lokale Ersatz-Analyse.
+          target.analysisState = 'ready';
+          target.analysisWarning = `Neu-Analyse nicht möglich${failure ? `: ${failure.replace(/[.\s]+$/, '')}` : ', weil Codex nicht verfügbar war'}. Die bisherige Analyse bleibt.`;
+          this.#write(current);
+          return;
+        }
         if (failure) {
           target.analysisState = 'failed';
           target.analysisWarning = failure;
@@ -458,6 +454,115 @@ export class IdeaBoard {
       else Object.assign(target.research, result, { status: 'ready', error: null, completedAt: this.now().toISOString() });
       this.#write(state);
     });
+  }
+
+  // Ein Recherche-Befund wird einmalig ein eigener Gedanke, der auf der Frage aufbaut und in ihren Räumen liegt.
+  #acceptResearch(command) {
+    const state = this.#read();
+    const question = this.#active(state, command.id);
+    const research = question.research;
+    const finding = research?.findings?.[command.index];
+    if (!Number.isInteger(command.index) || command.index < 0 || !finding) throw new IdeaBoardValidationError('Befund wurde nicht gefunden.');
+    const origin = { ideaId: question.id, completedAt: research.completedAt ?? null, index: command.index };
+    const sameOrigin = (idea) => idea.researchOrigin?.ideaId === origin.ideaId && idea.researchOrigin.completedAt === origin.completedAt && idea.researchOrigin.index === origin.index;
+    const rooms = (state.rooms ?? []).filter((room) => !room.archivedAt && room.ideaIds.includes(question.id));
+    const stamp = this.now().toISOString();
+    const existing = state.ideas.find(sameOrigin);
+    if (existing) {
+      if (existing.deletedAt) {
+        delete existing.deletedAt;
+        existing.updatedAt = stamp;
+        for (const room of rooms) if (!room.ideaIds.includes(existing.id)) { room.ideaIds.push(existing.id); room.updatedAt = stamp; }
+        this.#write(state);
+      }
+      return { idea: structuredClone(existing) };
+    }
+    const idea = {
+      id: this.makeId(), title: clean(finding.text).slice(0, 160), summary: finding.text, input: finding.text,
+      source: 'text', url: null, notes: '', topic: question.topic, keyPoints: [], keywords: [], tags: [],
+      createdAt: stamp, updatedAt: stamp, analysisState: 'ready', engine: research.engine,
+      manualFields: ['title', 'summary', 'topic'], parentId: null,
+      researchOrigin: { ...origin, sources: structuredClone(finding.sources) },
+      relations: [{ targetId: question.id, type: 'builds' }],
+    };
+    state.ideas.unshift(idea);
+    for (const room of rooms) { room.ideaIds.push(idea.id); room.updatedAt = stamp; }
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  #answer(command) {
+    const state = this.#read();
+    const idea = this.#active(state, command.id);
+    if (typeof command.answered !== 'boolean') throw new IdeaBoardValidationError('Ungültiger Fragenstatus.');
+    idea.answeredAt = command.answered ? this.now().toISOString() : null;
+    idea.updatedAt = this.now().toISOString();
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  // Legt mehrere Tags in einem Schritt zusammen; Schlagwort-Vorschläge ziehen mit, damit die alte Variante nicht wiederkommt.
+  #mergeTags(command) {
+    const tags = Array.isArray(command.tags) ? [...new Set(command.tags.map(cleanTag).filter(Boolean))] : [];
+    const into = cleanTag(command.into);
+    if (tags.length < 2 || !tags.some((tag) => sameTag(tag, into))) throw new IdeaBoardValidationError('Bitte mindestens zwei Tags und ein Ziel aus der Gruppe wählen.');
+    const state = this.#read();
+    const merged = (tag) => tags.some((item) => sameTag(item, tag));
+    const swap = (list) => {
+      const next = [];
+      for (const tag of list) {
+        const value = merged(tag) ? into : tag;
+        if (!next.some((known) => sameTag(known, value))) next.push(value);
+      }
+      return next;
+    };
+    const stamp = this.now().toISOString();
+    let changed = 0;
+    for (const idea of state.ideas) {
+      if (idea.deletedAt) continue;
+      const keywords = swap(idea.keywords ?? []);
+      if (!equal(keywords, idea.keywords ?? [])) idea.keywords = keywords;
+      const tagList = swap(tagsOf(idea));
+      if (equal(tagList, tagsOf(idea))) continue;
+      idea.tags = tagList;
+      idea.updatedAt = stamp;
+      changed += 1;
+    }
+    if (!changed) throw new IdeaBoardValidationError('Tags wurden nicht gefunden.');
+    this.#write(state);
+    return { tag: into, changed };
+  }
+
+  // Alle fertigen Gedanken noch einmal analysieren, etwa nach einem Modellwechsel.
+  #reanalyzeAll() {
+    const state = this.#read();
+    let queued = 0;
+    for (const idea of state.ideas) {
+      if (idea.deletedAt || idea.analysisState === 'pending') continue;
+      idea.reanalyze = idea.analysisState === 'failed' ? 'failed' : 'ready';
+      this.#queueIdea(idea);
+      queued += 1;
+    }
+    if (!queued) throw new IdeaBoardValidationError('Keine Gedanken zum Neu-Analysieren.');
+    this.#write(state);
+    return { queued };
+  }
+
+  #cancelReanalysis() {
+    const state = this.#read();
+    let stopped = 0;
+    for (const idea of state.ideas) {
+      if (!idea.reanalyze || idea.analysisState !== 'pending') continue;
+      // Eine neue Revision verwirft auch eine gerade laufende Analyse.
+      idea.analysisRevision = (idea.analysisRevision ?? 0) + 1;
+      idea.analysisState = idea.reanalyze;
+      if (idea.reanalyze === 'failed') idea.analysisWarning = 'Neu-Analyse abgebrochen.';
+      delete idea.reanalyze;
+      stopped += 1;
+    }
+    if (!stopped) throw new IdeaBoardValidationError('Keine Neu-Analyse aktiv.');
+    this.#write(state);
+    return { stopped };
   }
 
   #acceptReflection(command) {
@@ -697,6 +802,15 @@ export class IdeaBoard {
         let valid = !!research && typeof research === 'object' && ['pending', 'ready', 'failed'].includes(research.status) && typeof research.requestedAt === 'string';
         if (valid) try { validateResearch(research); } catch { valid = false; }
         if (!valid) throw new IdeaBoardValidationError('Die Datendatei enthält eine ungültige Recherche.');
+      }
+      if (idea.researchOrigin !== undefined) {
+        const origin = idea.researchOrigin;
+        let valid = !!origin && typeof origin.ideaId === 'string' && Number.isInteger(origin.index) && origin.index >= 0;
+        if (valid) try { validSources(origin.sources); } catch { valid = false; }
+        if (!valid) throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Recherche-Befund.');
+      }
+      if (idea.answeredAt != null && typeof idea.answeredAt !== 'string') {
+        throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Fragenstatus.');
       }
     }
     for (const key of ['rooms', 'reflections']) {

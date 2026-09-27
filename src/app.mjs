@@ -3,10 +3,12 @@ import { mindmapMarkup, relationLabels } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
-import { fold, foldMap, hitsIn, hitsInMap, hostOf, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
+import { initTagCleanup } from './tag-cleanup.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
+import { isDerived, isQuestion } from './thought-kinds.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
-const RAIL_SECTIONS = ['rooms', 'tags', 'topics'];
+const RAIL_SECTIONS = ['rooms', 'questions', 'tags', 'topics'];
 const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -38,6 +40,7 @@ const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
 const sourceLabel = (source) => ({ link: 'LINK', text: 'TEXT' })[source] ?? 'NOTIZ';
 const kindLabel = (source) => (source === 'link' ? 'LINK' : 'NOTIZ');
 const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
+const questionLabel = (idea) => (isQuestion(idea) ? (idea.answeredAt ? 'Beantwortet' : 'Offene Frage') : null);
 const suggestionsOf = (idea) => {
   const have = new Set(tagsOf(idea).map(lower));
   return (idea.keywords ?? []).filter((word) => !have.has(lower(word)));
@@ -85,7 +88,7 @@ const rowTags = (idea) => {
 const rowMarkup = (idea, selectedId, { color = null, meta = null, terms = [], tags = false } = {}) => {
   const snippet = snippetOf(idea, terms);
   const selected = idea.id === selectedId;
-  return `<article class="ib-thought-card"><button class="ib-row${selected ? ' is-selected' : ''}${snippet.hit ? ' has-hit' : ''}${idea.reflectionOrigin ? ' is-derived' : ''}" type="button" data-idea-id="${html(idea.id)}"${selected ? ' aria-current="true"' : ''}>
+  return `<article class="ib-thought-card"><button class="ib-row${selected ? ' is-selected' : ''}${snippet.hit ? ' has-hit' : ''}${isDerived(idea) ? ' is-derived' : ''}" type="button" data-idea-id="${html(idea.id)}"${selected ? ' aria-current="true"' : ''}>
   ${color ? `<span class="ib-topic-dot" style="background:${color}"></span>` : ''}
   <span class="ib-row-title">${markText(idea.title, terms, html)}</span>
   ${snippet.text ? `<span class="ib-row-excerpt">${markText(snippet.text, terms, html)}</span>` : ''}
@@ -109,7 +112,7 @@ const outsideRoom = (idea, room) => !!room && !room.ideaIds.includes(idea.id);
 function listMarkup(ideas, selectedId, terms, room) {
   return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, {
     terms,
-    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.reflectionOrigin ? 'KI-Vorschlag' : null, idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
+    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, isDerived(idea) ? 'KI-Vorschlag' : null, questionLabel(idea), idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
   })).join('')}</div>`;
 }
 
@@ -125,7 +128,7 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
       color: colorFor(idea.topic), terms, tags: true,
-      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : idea.reflectionOrigin ? 'KI-VORSCHLAG' : sourceLabel(idea.source)].filter(Boolean).join(' · '),
+      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
     })).join('')}</div>
   </div>`).join('');
 }
@@ -150,11 +153,18 @@ function railMarkup(ideas, filter, colorFor, collapsed) {
       <button type="button" data-idea-tag-filter="${html(tag)}"><span class="ib-rail-name">#${html(tag)}</span><span class="ib-rail-n">${count}</span></button>
       ${active ? `<button class="ib-rail-more" type="button" data-idea-tag-edit="${html(tag)}" title="Umbenennen oder zusammenlegen">⋯</button>` : ''}
     </div>`;
-  }).join('') : '<div class="ib-rail-empty">Noch keine Tags. Vorschläge erscheinen unter „Mehr“ in einem Gedanken.</div>';
+  }).join('') + (tags.length > 1 ? '<button class="ib-rail-action" type="button" data-tags-cleanup>Tags aufräumen …</button>' : '') : '<div class="ib-rail-empty">Noch keine Tags. Vorschläge erscheinen unter „Mehr“ in einem Gedanken.</div>';
   const topicItems = [...topicCount].map(([topic, count]) => `<div class="ib-rail-item${filter.topic === topic ? ' is-active' : ''}">
     <button type="button" data-idea-topic-filter="${html(topic)}"><span class="ib-topic-dot" style="background:${colorFor(topic)}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${count}</span></button>
   </div>`).join('');
-  return railSection('tags', 'TAGS', tags.length, tagItems, collapsed.has('tags'))
+  // Offene Fragen im Blick behalten: im Raum zählen nur seine Fragen.
+  const questions = ideas.filter(isQuestion);
+  const open = questions.filter((idea) => !idea.answeredAt).length;
+  const questionItems = [['open', 'Offen', open], ['answered', 'Beantwortet', questions.length - open]].map(([key, label, count]) => `<div class="ib-rail-item${filter.question === key ? ' is-active' : ''}">
+    <button type="button" data-idea-question-filter="${key}"><span class="ib-rail-name">${label}</span><span class="ib-rail-n">${count}</span></button>
+  </div>`).join('');
+  return (questions.length ? railSection('questions', 'FRAGEN', open, questionItems, collapsed.has('questions')) : '')
+    + railSection('tags', 'TAGS', tags.length, tagItems, collapsed.has('tags'))
     + railSection('topics', 'THEMEN', topicCount.size, topicItems, collapsed.has('topics'));
 }
 
@@ -162,6 +172,7 @@ function filterMarkup(filter, visibleCount, outsideCount) {
   const chips = [];
   if (filter.tag) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="tag">#${html(filter.tag)} <span>✕</span></button>`);
   if (filter.topic) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="topic">${html(filter.topic)} <span>✕</span></button>`);
+  if (filter.question) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="question">${filter.question === 'open' ? 'Offene Fragen' : 'Beantwortete Fragen'} <span>✕</span></button>`);
   if (filter.query) chips.push(`<button class="ib-filter-chip" type="button" data-idea-filter-clear="query">„${html(filter.query)}“ <span>✕</span></button>`);
   const note = `${visibleCount} Treffer${outsideCount ? ` · ${outsideCount} nicht im Raum` : ''}`;
   return `<div class="ib-filter"><span>FILTER</span>${chips.join('')}<span class="ib-filter-note">${html(note)}</span></div>`;
@@ -193,24 +204,36 @@ function connectionCount(idea, ideas) {
   return count;
 }
 
-const isQuestion = (idea) => [idea.title, idea.input].some((text) => /\?\s*$/.test(text ?? ''));
 const researchButton = (label = 'RECHERCHIEREN') => `<button class="ib-small-btn" type="button" data-research title="Sendet den Gedanken an Codex und recherchiert im Web">${label}</button>`;
+// Quellen sind beim Speichern geprüft; als Link erscheint trotzdem nur http(s).
+const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => /^https?:\/\//i.test(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
+const answerButton = (answered, label) => `<button class="ib-small-btn" type="button" data-question-answered="${answered}">${label}</button>`;
+
+// Eine Frage ist offen, bis sie als beantwortet markiert wird – von Hand oder nach einer Recherche.
+function questionMarkup(idea) {
+  if (!isQuestion(idea)) return '';
+  return idea.answeredAt
+    ? `<div class="ib-question-bar is-answered"><span>✓ BEANTWORTET · ${html(relativeDate(idea.answeredAt))}</span>${answerButton(false, 'WIEDER ÖFFNEN')}</div>`
+    : `<div class="ib-question-bar"><span>? OFFENE FRAGE</span>${answerButton(true, 'ALS BEANTWORTET MARKIEREN')}</div>`;
+}
 
 // Recherche ergänzt den Gedanken um Webquellen; der eigene Wortlaut bleibt unberührt.
-// Bei Fragen steht der Knopf direkt im Gedanken, sonst unter „Mehr“.
-function researchMarkup(idea) {
+// Bei Fragen steht der Knopf direkt im Gedanken, sonst unter „Mehr“. Befunde lassen sich als eigene Gedanken übernehmen.
+function researchMarkup(idea, ideas) {
   const research = idea.research;
   if (!research) return isQuestion(idea) ? `<div class="ib-research-start">${researchButton()}</div>` : '';
   const pending = research.status === 'pending';
   const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
-  const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p><span class="ib-research-sources">${finding.sources.map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span></div></li>`).join('')}</ol>` : '';
+  const adopted = (index) => ideas.some((other) => other.researchOrigin?.ideaId === idea.id && other.researchOrigin.completedAt === (research.completedAt ?? null) && other.researchOrigin.index === index);
+  const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
+  const closes = research.status === 'ready' && isQuestion(idea) && !idea.answeredAt;
   return `<section class="ib-research">
     <span class="ib-detail-label">RECHERCHE${meta ? ` · ${html(meta)}` : ''}</span>
     ${pending ? '<p class="ib-analysis-note" role="status">Codex recherchiert im Web. Das kann einige Minuten dauern; du kannst weiterarbeiten.</p>' : ''}
     ${research.status === 'failed' ? `<p class="ib-analysis-note is-error">${html(research.error)}</p>` : ''}
     ${research.summary ? `<p class="ib-research-summary">${html(research.summary)}</p>` : ''}
     ${findings}
-    ${pending ? '' : researchButton(research.status === 'failed' ? 'ERNEUT VERSUCHEN' : 'ERNEUT RECHERCHIEREN')}
+    ${pending ? '' : `<div class="ib-research-actions">${closes ? answerButton(true, 'FRAGE ALS BEANTWORTET MARKIEREN') : ''}${researchButton(research.status === 'failed' ? 'ERNEUT VERSUCHEN' : 'ERNEUT RECHERCHIEREN')}</div>`}
   </section>`;
 }
 
@@ -248,9 +271,11 @@ function detailMarkup(idea, ideas, colorFor, terms) {
       ${tagsOf(idea).map((tag) => `<button class="ib-tag-chip" type="button" data-idea-tag-filter="${html(tag)}" title="Nach #${html(tag)} filtern">#${html(tag)}</button>`).join('')}
       ${copy}
     </div>
+    ${questionMarkup(idea)}
     <article class="ib-text-body"${focusOnBody}>${body}</article>
+    ${idea.researchOrigin ? `<div class="ib-origin-sources"><span class="ib-detail-label">QUELLEN</span>${sourceLinks(idea.researchOrigin.sources ?? [])}</div>` : ''}
     ${link ? points + notes : notes + points + summary}
-    ${researchMarkup(idea)}
+    ${researchMarkup(idea, ideas)}
     ${relatedMarkup(idea, ideas, colorFor)}
     <details class="ib-organize"><summary>Mehr${connections ? ` · ${connections} Verbindung${connections === 1 ? '' : 'en'}` : ''}</summary>
       <div class="ib-meta-grid">
@@ -286,7 +311,7 @@ export function initGedankenraum({ root, getToken }) {
   const collapsedRail = new Set();
   try { for (const key of JSON.parse(localStorage.getItem(RAIL_KEY) ?? '[]')) if (RAIL_SECTIONS.includes(key)) collapsedRail.add(key); } catch { /* Alles bleibt aufgeklappt. */ }
   // filter.global: ein Tag- oder Themenfilter, der aus einem geöffneten Gedanken kommt, sucht in der ganzen Sammlung.
-  const filter = { tag: null, topic: null, query: '', global: false };
+  const filter = { tag: null, topic: null, question: null, query: '', global: false };
   let editingTag = null;
   const foldCache = new Map();
   const coarse = window.matchMedia('(pointer:coarse)');
@@ -381,6 +406,7 @@ export function initGedankenraum({ root, getToken }) {
       return (!chipTag || folded.tagList.includes(chipTag))
         && (!typedTags.length || typedTags.some((variant) => folded.tagList.some((tag) => tag.startsWith(variant))))
         && (!topics.length || topics.some((variant) => folded.topic.includes(variant)))
+        && (!filter.question || (isQuestion(idea) && (filter.question === 'answered') === !!idea.answeredAt))
         && matches(folded.hay, terms);
     });
     if (!terms.length) return results;
@@ -415,8 +441,10 @@ export function initGedankenraum({ root, getToken }) {
     rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
       + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
     q('[data-undo]').disabled = !canUndo;
+    const refreshing = ideas.filter((item) => item.reanalyze && item.analysisState === 'pending').length;
+    q('[data-reanalyze]').textContent = refreshing ? `NEU-ANALYSE ABBRECHEN · ${refreshing} OFFEN` : 'ALLE NEU ANALYSIEREN';
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
-    const hasFilter = !!(filter.tag || filter.topic || filter.query);
+    const hasFilter = !!(filter.tag || filter.topic || filter.question || filter.query);
     const outside = room ? visible.filter((candidate) => outsideRoom(candidate, room)).length : 0;
     let body;
     if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
@@ -473,7 +501,7 @@ export function initGedankenraum({ root, getToken }) {
       if (command.type === 'restore') showMessage('Gedanke wiederhergestellt.');
       render(); return result;
   };
-  const clearFilters = () => { filter.tag = null; filter.topic = null; filter.global = false; searchInput.value = ''; };
+  const clearFilters = () => { filter.tag = null; filter.topic = null; filter.question = null; filter.global = false; searchInput.value = ''; };
   const cardOf = (id) => [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === id) ?? null;
   const focusPanelContent = () => detail.querySelector('[data-detail-focus]')?.focus({ preventScroll: true });
   // Ein Klick liest: Auswahl öffnet den Gedanken. Der Fokus wandert nur per Tastatur in die Ansicht.
@@ -536,6 +564,22 @@ export function initGedankenraum({ root, getToken }) {
     newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
   });
   const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
+  initTagCleanup({ root, snapshot: () => ({ ideas }), request: post, render, notify: showMessage });
+  // Nach einem Modellwechsel alles noch einmal analysieren; läuft im Hintergrund und lässt sich abbrechen.
+  const reanalyze = async () => {
+    try {
+      if (ideas.some((item) => item.reanalyze && item.analysisState === 'pending')) {
+        const result = await runCommand({ type: 'cancelReanalysis' });
+        showMessage(`Neu-Analyse abgebrochen. ${result.stopped} Gedanken behalten ihre bisherige Analyse.`);
+        return;
+      }
+      if (status.classList.contains('is-fallback')) { showMessage('Codex ist nicht verfügbar. Die Neu-Analyse braucht Codex.', true); return; }
+      const count = ideas.filter((item) => item.analysisState !== 'pending').length;
+      if (!count || !window.confirm(`${count} Gedanken erneut mit ${status.textContent} analysieren?\n\nLinks werden neu gelesen und alle Texte noch einmal an Codex übertragen. Das läuft im Hintergrund und nutzt dein Codex-Kontingent. Eigene Titel, Zusammenfassungen und Themen bleiben. Schlägt eine Analyse fehl, bleibt die bisherige.`)) return;
+      const result = await runCommand({ type: 'reanalyzeAll' });
+      showMessage(`${result.queued} Gedanken werden neu analysiert. Abbrechen über ⋯.`);
+    } catch (error) { showMessage(error.message, true); }
+  };
   const setTags = async (idea, tags) => {
     const result = await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
     replaceIdea(result.idea);
@@ -569,11 +613,36 @@ export function initGedankenraum({ root, getToken }) {
     updateStorageFile();
     return storage;
   };
+  // Ein bereits gespeicherter Link wird gezeigt statt verdoppelt. Im Raum landet er dort mit;
+  // ein zweites Ablegen desselben Textes speichert ihn trotzdem neu.
+  let duplicateInput = null;
+  const handleDuplicate = async (input) => {
+    if (keep || !isLink(input) || duplicateInput === input) return false;
+    const key = linkKey(input);
+    const existing = ideas.find((idea) => idea.source === 'link' && linkKey(idea.url) === key);
+    const trashed = !existing && trash.some((idea) => idea.source === 'link' && linkKey(idea.url) === key);
+    if (!existing && !trashed) return false;
+    duplicateInput = input;
+    if (trashed) { showMessage('Dieser Link liegt im Papierkorb (⋯ → Papierkorb). Nochmal Ablegen speichert ihn neu.'); return true; }
+    const room = spaces.currentRoom();
+    if (room && !room.ideaIds.includes(existing.id)) {
+      await post('/api/ideas/execute', { type: 'roomMembers', id: room.id, add: [existing.id] });
+      captureInput.value = ''; updateType(); duplicateInput = null;
+      showMessage(`Schon gespeichert: „${shorten(existing.title, 50)}“ liegt jetzt auch in diesem Raum.`);
+    } else showMessage(`Schon gespeichert: „${shorten(existing.title, 50)}“. Nochmal Ablegen speichert den Link trotzdem neu.`);
+    selectedId = existing.id; detailOpen = true; spaces.closeResults();
+    if (!visibleIdeas().some((idea) => idea.id === existing.id)) clearFilters();
+    render();
+    cardOf(existing.id)?.scrollIntoView({ block: 'nearest' });
+    return true;
+  };
   // Ablegen fragt nichts und räumt nichts weg: Suche, Filter und geöffneter Gedanke bleiben,
   // solange der neue Gedanke damit sichtbar ist.
   const capture = async () => {
     const input = captureInput.value.trim();
     if (!input || busy) return;
+    try { if (await handleDuplicate(input)) return; } catch (error) { showMessage(error.message, true); return; }
+    duplicateInput = null;
     busy = true;
     captureButton.disabled = true;
     captureButton.innerHTML = 'WIRD GESPEICHERT <span class="ib-spinner">◌</span>';
@@ -785,6 +854,9 @@ export function initGedankenraum({ root, getToken }) {
     if (tagFilter) return toggleFilter('tag', tagFilter.dataset.ideaTagFilter, detail.contains(tagFilter));
     const topicFilter = target.closest?.('[data-idea-topic-filter]');
     if (topicFilter) return toggleFilter('topic', topicFilter.dataset.ideaTopicFilter, detail.contains(topicFilter));
+    const questionFilter = target.closest?.('[data-idea-question-filter]');
+    if (questionFilter) return toggleFilter('question', questionFilter.dataset.ideaQuestionFilter);
+    if (target.closest('[data-reanalyze]')) return reanalyze();
     const row = target.closest?.('[data-idea-id]');
     if (row) {
       if (inline.isEditing()) { inline.focus(); return; }
@@ -818,6 +890,13 @@ export function initGedankenraum({ root, getToken }) {
       } else if (target.closest?.('[data-research]')) {
         await runCommand({ type: 'research', id: idea.id });
         showMessage('Recherche gestartet. Das Ergebnis erscheint im Gedanken.');
+      } else if (target.closest?.('[data-research-accept]')) {
+        await runCommand({ type: 'acceptResearch', id: idea.id, index: Number(target.closest('[data-research-accept]').dataset.researchAccept) });
+        showMessage('Als Gedanke übernommen. Er baut auf dieser Frage auf.');
+      } else if (target.closest?.('[data-question-answered]')) {
+        const answered = target.closest('[data-question-answered]').dataset.questionAnswered === 'true';
+        await runCommand({ type: 'answer', id: idea.id, answered });
+        showMessage(answered ? 'Frage als beantwortet markiert.' : 'Frage ist wieder offen.');
       } else if (target.closest?.('[data-idea-delete]')) {
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
         ideas = ideas.filter((item) => item.id !== idea.id);

@@ -1,5 +1,14 @@
+import { digestFileName, digestMarkdown, digestMarkup, digestOutline, roomDigest } from './room-summary.mjs';
+
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const kinds = { commonalities: 'Gemeinsamkeiten', contradictions: 'Widersprüche', questions: 'Offene Fragen' };
+const saveText = (text, name) => {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1_000);
+};
 
 export function initWorkspaces({ root, snapshot, command, render, reveal, visibleIds, selected, canNavigate = () => true, openPanel = () => {} }) {
   let activeId = null;
@@ -55,6 +64,16 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
     mode = 'add';
     const rooms = snapshot().rooms.filter((room) => !room.archivedAt);
     shell('Auswahl einem Raum hinzufügen', `<p>${picked.size} ausgewählte Gedanken</p><label class="ib-dialog-field"><span>ARBEITSRAUM</span><select name="room" required>${rooms.map((room) => `<option value="${html(room.id)}">${html(room.question)}</option>`).join('')}</select></label>`, 'HINZUFÜGEN');
+  };
+  // Eine Seite je Raum zum Nachlesen, Kopieren oder als Folien-Gliederung für einen Vortrag.
+  const overviewDigest = () => {
+    const room = snapshot().rooms.find((item) => item.id === editingId);
+    return room ? roomDigest(room, snapshot().ideas, snapshot().reflections) : null;
+  };
+  const openOverview = (room = currentRoom()) => {
+    if (!room) return;
+    mode = 'overview'; editingId = room.id;
+    shell(room.question, `<div class="ib-overview-actions"><button type="button" class="ib-small-btn" data-overview-copy>MARKDOWN KOPIEREN</button><button type="button" class="ib-small-btn" data-overview-save="document">MARKDOWN SPEICHERN</button><button type="button" class="ib-small-btn" data-overview-save="slides">FOLIEN-GLIEDERUNG SPEICHERN</button></div><div class="ib-room-overview">${digestMarkup(overviewDigest())}</div>`);
   };
   const openArchive = () => {
     mode = 'archive';
@@ -165,6 +184,15 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
     if (target.closest('[data-room-new]')) editRoom();
     if (target.closest('[data-room-edit]')) editRoom(currentRoom());
     if (target.closest('[data-room-members]')) openMembers(currentRoom());
+    if (target.closest('[data-room-overview]')) openOverview();
+    const copy = target.closest('[data-overview-copy]');
+    if (copy && overviewDigest()) safely(async () => { await navigator.clipboard.writeText(digestMarkdown(overviewDigest())); copy.textContent = 'KOPIERT'; });
+    const save = target.closest('[data-overview-save]');
+    if (save && overviewDigest()) {
+      const digest = overviewDigest();
+      const slides = save.dataset.overviewSave === 'slides';
+      saveText(slides ? digestOutline(digest) : digestMarkdown(digest), digestFileName(digest, slides ? '-folien' : ''));
+    }
     if (target.closest('[data-room-archives]')) openArchive();
     if (target.closest('[data-room-leave]')) chooseRoom(null);
     if (target.closest('[data-selection-add]')) openAddToRoom();
@@ -219,9 +247,9 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
       root.querySelector('[data-idea-grid]').classList.toggle('has-results', !resultsPanel.hidden);
       // Der aktive Raum steht als Titel; gewechselt wird in der Sammlung.
       root.querySelector('[data-workspace-bar]').innerHTML = room
-        ? `<span class="ib-room-title is-room"><small>RAUM</small><span class="ib-room-name" title="${html(room.question)}">${html(room.question)}</span><button type="button" data-room-leave aria-label="Raum verlassen" title="Raum verlassen">×</button></span>`
+        ? `<span class="ib-room-title is-room"><small>RAUM</small><span class="ib-room-name" title="${html(room.question)}">${html(room.question)}</span><button type="button" data-room-overview title="Übersicht und Export">Übersicht</button><button type="button" data-room-leave aria-label="Raum verlassen" title="Raum verlassen">×</button></span>`
         : '<span class="ib-room-title">Gedankenraum</span>';
-      root.querySelector('[data-room-tools]').innerHTML = `<button type="button" data-room-new>+ Arbeitsraum</button>${room ? '<button type="button" data-room-edit>Frage ändern</button><button type="button" data-room-members>Gedanken zuordnen</button>' : ''}${archived ? `<button type="button" data-room-archives>Archiv · ${archived}</button>` : ''}<button type="button" data-results-open>Auswertungen · ${contextResults().length}</button>`;
+      root.querySelector('[data-room-tools]').innerHTML = `<button type="button" data-room-new>+ Arbeitsraum</button>${room ? '<button type="button" data-room-edit>Frage ändern</button><button type="button" data-room-members>Gedanken zuordnen</button><button type="button" data-room-overview>Übersicht &amp; Export</button>' : ''}${archived ? `<button type="button" data-room-archives>Archiv · ${archived}</button>` : ''}<button type="button" data-results-open>Auswertungen · ${contextResults().length}</button>`;
       const bar = root.querySelector('[data-context-bar]');
       bar.hidden = !selecting && !picked.size;
       const members = room ? [...picked].filter((id) => room.ideaIds.includes(id)).length : 0;
@@ -239,7 +267,9 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
         else { const wrapper = document.createElement('div'); wrapper.className = 'ib-selection-row'; button.before(wrapper); wrapper.append(label, button); }
       }
       const origin = selected()?.reflectionOrigin;
+      const found = selected()?.researchOrigin;
       if (origin) root.querySelector('[data-idea-detail] .ib-panel-head')?.insertAdjacentHTML('afterend', `<p class="ib-provenance">Übernommener KI-Vorschlag <button type="button" data-provenance="${html(origin.id)}">QUELLENSTAND ANSEHEN</button></p>`);
+      else if (found) root.querySelector('[data-idea-detail] .ib-panel-head')?.insertAdjacentHTML('afterend', `<p class="ib-provenance">Übernommener Recherche-Befund${snapshot().ideas.some((idea) => idea.id === found.ideaId) ? ` <button type="button" data-related-open="${html(found.ideaId)}">ZUR FRAGE</button>` : ''}</p>`);
       if (!resultsPanel.hidden && mode === 'results') openResults();
     },
   };

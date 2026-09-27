@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { codexArguments, createCodexAnalyzer } from './codex-analysis.mjs';
+import { TAG_MERGE_SCHEMA } from './tag-analysis.mjs';
 
 const request = {
   input: 'Tiefe Module konzentrieren Komplexität.',
@@ -72,6 +73,25 @@ test('Codex prompt requires source-grounded reporting without changing factual s
   assert.match(prompt, /keine eigene Meinung/i);
   assert.match(prompt, /tatsächlich.*hypothetisch/i);
   assert.match(prompt, /nicht im Quellmaterial belegt/i);
+});
+
+test('tag merge suggestions keep only existing tags in non-overlapping groups with a target from the group', async () => {
+  const tags = [{ name: 'KI', count: 3 }, { name: 'AI', count: 1 }, { name: 'Tokenkosten', count: 2 }, { name: 'Tokenverbrauch', count: 1 }];
+  let invocation;
+  const analyzer = createCodexAnalyzer({
+    resolveRuntime: async () => ({ executable: 'codex.exe' }),
+    execute: async (value) => { invocation = value; return { groups: [
+      { into: 'KI', tags: ['KI', 'AI'], reason: 'Übersetzung' },
+      { into: 'Tokenkosten', tags: ['Tokenkosten', 'Tokenverbrauch', 'Erfunden'], reason: 'unbekannter Tag' },
+      { into: 'AI', tags: ['AI', 'Tokenverbrauch'], reason: 'überlappt' },
+      { into: 'Neu', tags: ['Tokenkosten', 'Tokenverbrauch'], reason: 'Ziel nicht in der Gruppe' },
+    ] }; },
+  });
+  const result = await analyzer.suggestTagMerges({ tags });
+  assert.deepEqual(invocation.schema, TAG_MERGE_SCHEMA);
+  assert.match(invocation.prompt, /<UNTRUSTED_TAGS_[a-f0-9]+>/);
+  assert.match(invocation.prompt, /Ober- und Unterbegriff/);
+  assert.deepEqual(result.groups, [{ into: 'KI', tags: ['KI', 'AI'], reason: 'Übersetzung' }]);
 });
 
 test('Codex process arguments fix model and effort and remove interactive tools', () => {

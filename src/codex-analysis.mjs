@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { createLocalAnalyzer } from './local-analysis.mjs';
 import { REFLECTION_SCHEMA, reflectionPrompt, validateReflection } from './reflection-analysis.mjs';
 import { RESEARCH_SCHEMA, researchPrompt, validateResearch } from './research-analysis.mjs';
+import { TAG_MERGE_SCHEMA, tagMergePrompt, validateTagMerges } from './tag-analysis.mjs';
 
 const exec = promisify(execFile);
 const MODEL = 'gpt-6-sol';
@@ -239,6 +240,17 @@ export function createCodexAnalyzer({
         if (controller.signal.aborted) throw controller.signal.reason;
         const value = await execute({ runtime: resolvedRuntime, prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, timeoutMs: 15 * 60_000, signal: controller.signal });
         return { ...validateResearch(value), engine: ENGINE };
+      } finally { active.delete(controller); }
+    },
+    async suggestTagMerges(request) {
+      if (stopped) throw new Error('Gedankenraum wird beendet');
+      const controller = new AbortController();
+      active.add(controller);
+      try {
+        const resolvedRuntime = await runtime();
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const value = await execute({ runtime: resolvedRuntime, prompt: tagMergePrompt(request), schema: TAG_MERGE_SCHEMA, signal: controller.signal });
+        return { ...validateTagMerges(value, request.tags.map((tag) => tag.name)), engine: ENGINE };
       } finally { active.delete(controller); }
     },
     async stop() {
