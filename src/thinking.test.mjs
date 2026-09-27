@@ -147,6 +147,32 @@ test('mindmap colors thoughts adopted from an evaluation apart from their source
   assert.match(markup, /class="ib-mm-node"[^>]*data-mm-id="source"/);
 });
 
+test('adopted suggestions and findings sit to the right of the thought they build on; own parents win', () => {
+  const ideas = [
+    { id: 'source', title: 'Quelle' },
+    { id: 'other', title: 'Zweite Quelle' },
+    { id: 'question', title: 'Frage?', reflectionOrigin: { id: 'r', index: 0 }, relations: [{ targetId: 'source', type: 'builds' }, { targetId: 'other', type: 'builds' }] },
+    { id: 'finding', title: 'Befund', researchOrigin: { ideaId: 'question', index: 0 }, relations: [{ targetId: 'question', type: 'builds' }] },
+    { id: 'manual', title: 'Eigene Verbindung', relations: [{ targetId: 'source', type: 'builds' }] },
+    { id: 'moved', title: 'Verschoben', parentId: 'other', reflectionOrigin: { id: 'r', index: 1 }, relations: [{ targetId: 'source', type: 'builds' }] },
+  ];
+  const layout = layoutMindmap(ideas);
+  const at = (id, nodes = layout.nodes) => nodes.find((node) => node.idea.id === id);
+  assert.deepEqual(['source', 'question', 'finding'].map((id) => at(id).x), [32, 332, 632]);
+  assert.equal(at('question').y, at('source').y);
+  assert.equal(at('finding').y, at('question').y);
+  assert.equal(at('manual').x, 32);
+  assert.equal(at('moved').x, 332);
+  assert.equal(at('moved').y, at('other').y);
+  assert.ok(layout.edges.find((edge) => edge.to.idea.id === 'question').derived);
+  assert.equal(layout.edges.find((edge) => edge.to.idea.id === 'moved').derived, false);
+  assert.deepEqual(layoutMindmap(ideas, new Set(['source'])).nodes.map((node) => node.idea.id), ['source', 'other', 'moved', 'manual']);
+  const filtered = layoutMindmap(ideas.filter((idea) => !['source', 'other'].includes(idea.id))).nodes;
+  assert.equal(at('question', filtered).x, 32);
+  assert.equal(at('finding', filtered).x, 332);
+  assert.match(mindmapMarkup(ideas, null, () => '#fff', { collapsed: new Set(), zoom: 1 }), /class="ib-mm-derived"/);
+});
+
 test('active-only commands do not alter trash and malformed optional graph fields cannot be imported', async () => {
   const board = fixture();
   const { idea } = await board.execute({ type: 'capture', input: 'Aufbewahren' });

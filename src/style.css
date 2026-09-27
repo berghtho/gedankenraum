@@ -283,6 +283,7 @@ mark.ib-hit { background:rgba(213,255,101,.22);color:inherit;border-radius:3px;p
 .ib-mm-canvas { position:absolute;top:0;left:0;transform-origin:top left; }
 .ib-mm-lines { position:absolute;top:0;left:0;pointer-events:none;overflow:visible; }
 .ib-mm-lines>path { stroke:#768568;stroke-width:1.5;fill:none; }
+.ib-mm-lines>path.ib-mm-derived { stroke:#6c6196; }
 .ib-mm-lines>path.ib-mm-relation { stroke:#d5ff65;stroke-width:1.4;stroke-dasharray:5 5;opacity:.7; }
 #mm-arrow path { fill:#d5ff65;stroke:none; }
 .ib-mm-node { position:absolute;width:248px;height:84px;background:#22271d;border:1px solid #58654a;border-left:3px solid var(--node-color);border-radius:10px;box-shadow:0 6px 16px #0003;cursor:grab;user-select:none;touch-action:none; }

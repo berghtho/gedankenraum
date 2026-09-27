@@ -1,5 +1,5 @@
 const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
-import { mindmapMarkup, relationLabels } from './mindmap.mjs';
+import { displayParent, mindmapMarkup, relationLabels } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
@@ -532,11 +532,13 @@ export function initGedankenraum({ root, getToken }) {
         if (!visibleIdeas().some((idea) => idea.id === id)) { spaces.reset(); showMessage('Raum verlassen, damit der Gedanke sichtbar ist.'); }
         else showMessage('Filter aufgehoben.');
       }
+      // Eingeklappte Vorfahren öffnen, auch wenn ein Vorschlag nur über „baut auf“ an seiner Quelle hängt.
+      const byId = new Map(ideas.map((item) => [item.id, item]));
       const visited = new Set();
-      let idea = selected();
-      while (idea?.parentId && !visited.has(idea.parentId)) {
-        visited.add(idea.parentId); thinking.mapState.collapsed.delete(idea.parentId);
-        idea = ideas.find((item) => item.id === idea.parentId);
+      let parentId = selected() ? displayParent(selected(), byId) : null;
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId); thinking.mapState.collapsed.delete(parentId);
+        parentId = displayParent(byId.get(parentId), byId);
       }
       render();
       const node = cardOf(id);
@@ -550,6 +552,7 @@ export function initGedankenraum({ root, getToken }) {
   });
   const inline = initInlineThought({
     root, command: runCommand, render, notify: showMessage, selected,
+    parentOf: (idea) => displayParent(idea, new Map(ideas.map((item) => [item.id, item]))),
     reveal: (id) => { const open = resumePanel; resumePanel = false; reveal(id, open); },
   });
   const editInline = (idea = selected()) => {

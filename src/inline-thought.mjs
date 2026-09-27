@@ -1,7 +1,7 @@
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 // Drafts live outside rendered DOM so background snapshots cannot erase typing.
-export function initInlineThought({ root, command, render, reveal, notify, selected }) {
+export function initInlineThought({ root, command, render, reveal, notify, selected, parentOf = (idea) => idea.parentId ?? null }) {
   let draft = null;
   let saving = false;
   const close = () => { const id = draft?.id ?? draft?.anchorId; draft = null; render(); if (id) reveal(id, false); else root.querySelector('[data-idea-input]')?.focus(); };
@@ -16,7 +16,8 @@ export function initInlineThought({ root, command, render, reveal, notify, selec
   };
   const openNew = (kind = 'root', idea = selected()) => open({
     type: 'new', title: '', input: '', anchorId: idea?.id,
-    parentId: kind === 'child' ? idea?.id : kind === 'sibling' ? idea?.parentId : null,
+    // Ein Nachbar landet neben dem Gedanken, auch wenn der nur über „baut auf“ an seiner Quelle hängt.
+    parentId: kind === 'child' ? idea?.id : kind === 'sibling' && idea ? parentOf(idea) : null,
     label: kind === 'child' ? 'Untergedanke' : kind === 'sibling' ? 'Weiterdenken' : 'Neuer Gedanke',
   });
   root.addEventListener('input', (event) => {

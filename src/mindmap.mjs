@@ -3,17 +3,27 @@ import { isDerived } from './thought-kinds.mjs';
 export const relationLabels = { builds: 'baut auf', contradicts: 'widerspricht', example: 'Beispiel für' };
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
+// Übernommene Vorschläge und Recherche-Befunde hängen in der Mindmap an dem ersten sichtbaren Gedanken,
+// auf dem sie aufbauen. Ein selbst gesetzter Elternknoten geht vor; gespeichert wird dabei nichts.
+export function displayParent(idea, byId) {
+  if (idea.parentId && idea.parentId !== idea.id && byId.has(idea.parentId)) return idea.parentId;
+  if (!isDerived(idea)) return null;
+  return (idea.relations ?? []).find((edge) => edge.type === 'builds' && edge.targetId !== idea.id && byId.has(edge.targetId))?.targetId ?? null;
+}
+
 // A missing/filtered parent makes an idea a visible root. Imported cycles are broken
 // locally for display, without silently changing the user's saved relationships.
+// Ein Knoten steht in der Zeile seines ersten sichtbaren Kindes, damit Kinder rechts daneben stehen.
 export function layoutMindmap(ideas, collapsed = new Set()) {
   const byId = new Map(ideas.map((idea) => [idea.id, idea]));
   const children = new Map();
   const roots = [];
   for (const idea of ideas) {
-    if (!idea.parentId || !byId.has(idea.parentId) || idea.parentId === idea.id) roots.push(idea);
+    const parentId = displayParent(idea, byId);
+    if (!parentId) roots.push(idea);
     else {
-      if (!children.has(idea.parentId)) children.set(idea.parentId, []);
-      children.get(idea.parentId).push(idea);
+      if (!children.has(parentId)) children.set(parentId, []);
+      children.get(parentId).push(idea);
     }
   }
   const nodes = [];
@@ -25,11 +35,12 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
     visited.add(idea.id);
     const node = { idea, x: 32 + depth * 300, y: 32 + row * 112, children: (children.get(idea.id) ?? []).length };
     if (!hidden) {
-      row += 1;
       nodes.push(node);
-      if (parent) edges.push({ from: parent, to: node });
+      if (parent) edges.push({ from: parent, to: node, derived: idea.parentId !== parent.idea.id });
     }
+    const start = row;
     for (const child of children.get(idea.id) ?? []) visit(child, depth + 1, node, hidden || collapsed.has(idea.id));
+    if (!hidden && row === start) row += 1;
   };
   for (const idea of roots) visit(idea, 0);
   for (const idea of ideas) if (!visited.has(idea.id)) visit(idea, 0);
@@ -39,7 +50,7 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
 export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) {
   const layout = layoutMindmap(ideas, collapsed);
   const positions = new Map(layout.nodes.map((node) => [node.idea.id, node]));
-  const links = layout.edges.map(({ from, to }) => `<path d="M${from.x + 248},${from.y + 42} C${from.x + 278},${from.y + 42} ${to.x - 30},${to.y + 42} ${to.x},${to.y + 42}"/>`);
+  const links = layout.edges.map(({ from, to, derived }) => `<path${derived ? ' class="ib-mm-derived"' : ''} d="M${from.x + 248},${from.y + 42} C${from.x + 278},${from.y + 42} ${to.x - 30},${to.y + 42} ${to.x},${to.y + 42}"/>`);
   for (const from of layout.nodes) for (const relation of from.idea.relations ?? []) {
     const to = positions.get(relation.targetId);
     if (!to || (from.idea.id !== selectedId && to.idea.id !== selectedId) || !relationLabels[relation.type]) continue;

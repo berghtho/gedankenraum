@@ -1,4 +1,4 @@
-import { relationLabels } from './mindmap.mjs';
+import { displayParent, relationLabels } from './mindmap.mjs';
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 export function connectionsMarkup(idea, ideas) {
@@ -45,7 +45,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
   const openNew = (kind, idea = selected()) => {
     if (newInline) { if (idea?.id) mapState.collapsed.delete(idea.id); return newInline(kind, idea); }
     mode = 'new';
-    const parentId = kind === 'child' ? idea?.id : kind === 'sibling' ? idea?.parentId : null;
+    const parentId = kind === 'child' ? idea?.id : kind === 'sibling' && idea ? displayParent(idea, new Map(snapshot().ideas.map((item) => [item.id, item]))) : null;
     editing = { parentId: parentId ?? null, topic: kind === 'root' ? null : idea?.topic };
     const parent = snapshot().ideas.find((item) => item.id === parentId);
     shell(kind === 'child' ? 'Untergedanke' : kind === 'sibling' ? 'Nachbargedanke' : 'Neuer Gedanke',
