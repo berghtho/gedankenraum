@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
+import { researchSource, validateResearch } from './research-analysis.mjs';
+import { fold } from './search.mjs';
 
 const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
@@ -32,6 +34,31 @@ function normalizedTags(value) {
 
 const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 
+// Schreibvarianten zählen als derselbe Tag: Groß-/Kleinschreibung, Umlaute, Trennzeichen und einfache Mehrzahl.
+const tagKey = (value) => fold(value).replace(/[\s\-_./·]+/g, '');
+const PLURAL_ENDINGS = ['s', 'e', 'n', 'en', 'es', 'nen'];
+export const similarTag = (left, right) => {
+  const [short, long] = [tagKey(left), tagKey(right)].sort((a, b) => a.length - b.length);
+  return short === long || (short.length >= 3 && long.startsWith(short) && PLURAL_ENDINGS.includes(long.slice(short.length)));
+};
+
+// Ein ähnlicher bestehender Tag gewinnt mit seiner Schreibweise, statt eine neue Variante anzulegen.
+export function preferExistingTags(words, known) {
+  const tags = [];
+  for (const word of words) {
+    const tag = known.find((candidate) => similarTag(candidate, word)) ?? word;
+    if (!tags.some((item) => similarTag(item, tag))) tags.push(tag);
+  }
+  return tags;
+}
+
+// Häufig genutzte Tags zuerst: Sie gehen so an die Analyse und gewinnen bei Schreibvarianten.
+const knownTags = (state) => {
+  const counts = new Map();
+  for (const idea of state.ideas) if (!idea.deletedAt) for (const tag of tagsOf(idea)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  return [...counts].sort(([, left], [, right]) => right - left).map(([tag]) => tag);
+};
+
 function normalizedAnalysis(value, fallbackTitle) {
   const title = clean(value?.title, fallbackTitle).slice(0, 160);
   const summary = clean(value?.summary, fallbackTitle).slice(0, 1_200);
@@ -56,15 +83,25 @@ const mergeById = (current = [], incoming = []) => {
 const importedReflections = (items = []) => items.map((item) => item.status === 'pending'
   ? { ...item, status: 'failed', error: 'Unfertige Auswertung importiert. Prüfe die Quellen und starte sie mit „Erneut versuchen“.' }
   : item);
+// Wie bei Auswertungen startet der Import allein keine Übertragung an Codex.
+const importedIdeas = (items = []) => items.map((idea) => idea.research?.status === 'pending'
+  ? { ...idea, research: { ...idea.research, status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' } }
+  : idea);
 
 export class IdeaBoard {
-  constructor({ path, analyze, readLink, reflect = async () => { throw new Error('KI-Auswertung ist nicht verfügbar. Bitte Codex anmelden.'); }, now = () => new Date(), makeId = randomUUID }) {
+  constructor({
+    path, analyze, readLink,
+    reflect = async () => { throw new Error('KI-Auswertung ist nicht verfügbar. Bitte Codex anmelden.'); },
+    research = async () => { throw new Error('KI-Recherche ist nicht verfügbar. Bitte Codex anmelden.'); },
+    now = () => new Date(), makeId = randomUUID,
+  }) {
     if (!path || typeof path !== 'string') throw new TypeError('IdeaBoard requires a state path');
     if (typeof analyze !== 'function') throw new TypeError('IdeaBoard requires an analyzer');
     if (typeof readLink !== 'function') throw new TypeError('IdeaBoard requires a link reader');
     this.path = path;
     this.analyze = analyze;
     this.reflect = reflect;
+    this.research = research;
     this.readLink = readLink;
     this.now = now;
     this.makeId = makeId;
@@ -91,7 +128,7 @@ export class IdeaBoard {
     return this.#enqueue(async () => {
       const before = this.#read();
       const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection'].includes(command.type)) this.#remember(before, this.#read());
+      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research'].includes(command.type)) this.#remember(before, this.#read());
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -120,6 +157,7 @@ export class IdeaBoard {
     if (['roomCreate', 'roomRename', 'roomMembers', 'roomArchive', 'roomRestore'].includes(command.type)) return this.#roomCommand(command);
     if (command.type === 'reflect') return this.#startReflection(command);
     if (command.type === 'acceptReflection') return this.#acceptReflection(command);
+    if (command.type === 'research') return this.#startResearch(command);
     if (command.type === 'retryReflection') {
       const state = this.#read();
       const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
@@ -260,7 +298,13 @@ export class IdeaBoard {
       const reflection = (state.reflections ?? []).find((item) => item.status === 'pending');
       if (reflection) { await this.#analyzeReflection(reflection); continue; }
       const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending');
-      if (!idea) return;
+      if (!idea) {
+        // Recherchen laufen nach den Analysen, damit sie auf fertigen Zusammenfassungen aufbauen.
+        const researched = state.ideas.find((item) => !item.deletedAt && item.research?.status === 'pending');
+        if (!researched) return;
+        await this.#runResearch(researched);
+        continue;
+      }
       const generation = this.generation;
       const revision = idea.analysisRevision;
       let result;
@@ -274,7 +318,7 @@ export class IdeaBoard {
         result = await this.analyze({
           input: idea.input, source,
           existingTopics: [...new Set(state.ideas.filter((item) => !item.deletedAt && item.topic !== 'Unsortiert').map((item) => item.topic))],
-          existingTags: [...new Set(state.ideas.filter((item) => !item.deletedAt).flatMap(tagsOf))],
+          existingTags: knownTags(state),
         });
       } catch (error) { failure = error.message || 'Analyse fehlgeschlagen.'; }
       await this.#enqueue(() => {
@@ -287,6 +331,7 @@ export class IdeaBoard {
           target.analysisWarning = failure;
         } else {
           const analysis = normalizedAnalysis(result.analysis ?? result, idea.title);
+          analysis.keywords = preferExistingTags(analysis.keywords, knownTags(current));
           for (const [key, value] of Object.entries(analysis)) {
             if (!(target.manualFields ?? []).includes(key)) target[key] = value;
           }
@@ -381,6 +426,36 @@ export class IdeaBoard {
       if (!target) return;
       if (failure) { target.status = 'failed'; target.error = failure; }
       else { Object.assign(target, result); target.status = 'ready'; target.error = null; }
+      this.#write(state);
+    });
+  }
+
+  #startResearch(command) {
+    const state = this.#read();
+    const idea = this.#active(state, command.id);
+    if (idea.research?.status === 'pending') throw new IdeaBoardValidationError('Die Recherche läuft bereits.');
+    if (state.ideas.filter((item) => !item.deletedAt && item.research?.status === 'pending').length >= 5) throw new IdeaBoardValidationError('Es warten bereits fünf Recherchen. Bitte kurz warten.');
+    // Ein früheres Ergebnis bleibt sichtbar, bis das neue da ist; der eigene Wortlaut bleibt unberührt.
+    idea.research = { summary: '', findings: [], engine: null, completedAt: null, ...idea.research, status: 'pending', requestedAt: this.now().toISOString(), error: null };
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  async #runResearch(idea) {
+    const generation = this.generation;
+    const { requestedAt } = idea.research;
+    let result; let failure;
+    try {
+      const value = await this.research({ source: researchSource(idea) });
+      result = { ...validateResearch(value), engine: clean(value.engine, 'KI-Recherche') };
+    } catch (error) { failure = error.message || 'Recherche fehlgeschlagen.'; }
+    await this.#enqueue(() => {
+      if (this.stopped || generation !== this.generation) return;
+      const state = this.#read();
+      const target = state.ideas.find((item) => item.id === idea.id && !item.deletedAt);
+      if (target?.research?.status !== 'pending' || target.research.requestedAt !== requestedAt) return;
+      if (failure) Object.assign(target.research, { status: 'failed', error: failure });
+      else Object.assign(target.research, result, { status: 'ready', error: null, completedAt: this.now().toISOString() });
       this.#write(state);
     });
   }
@@ -493,11 +568,8 @@ export class IdeaBoard {
   #retag(command) {
     const state = this.#read();
     const idea = this.#active(state, command.id);
-    const tags = normalizedTags(command.tags);
-    // Bestehende Schreibweise eines Tags in der Sammlung übernehmen, damit #ai und #AI nicht auseinanderlaufen.
-    const known = new Map();
-    for (const other of state.ideas) for (const tag of tagsOf(other)) known.set(tag.toLocaleLowerCase('de-DE'), tag);
-    idea.tags = tags.map((tag) => known.get(tag.toLocaleLowerCase('de-DE')) ?? tag);
+    // Bestehende Schreibweise eines Tags in der Sammlung übernehmen, damit #ai, #AI und #KI-Agent/#KI-Agenten nicht auseinanderlaufen.
+    idea.tags = preferExistingTags(normalizedTags(command.tags), knownTags(state));
     idea.updatedAt = this.now().toISOString();
     this.#write(state);
     return { idea: structuredClone(idea) };
@@ -552,7 +624,7 @@ export class IdeaBoard {
       state = {
         ...target, ...current,
         version: 1,
-        ideas: [...current.ideas, ...target.ideas.filter((idea) => !currentIds.has(idea.id))],
+        ideas: [...current.ideas, ...importedIdeas(target.ideas.filter((idea) => !currentIds.has(idea.id)))],
         rooms: mergeById(current.rooms, target.rooms),
         reflections: mergeById(current.reflections, importedReflections(target.reflections)),
       };
@@ -570,7 +642,7 @@ export class IdeaBoard {
     const knownIds = new Set(current.ideas.map((idea) => idea.id));
     const additions = [];
     let skipped = 0;
-    for (const idea of imported.ideas) {
+    for (const idea of importedIdeas(imported.ideas)) {
       if (knownIds.has(idea.id)) {
         skipped += 1;
         continue;
@@ -619,6 +691,12 @@ export class IdeaBoard {
       if (idea.manualFields !== undefined && (!Array.isArray(idea.manualFields)
         || idea.manualFields.some((field) => !['title', 'summary', 'topic'].includes(field)))) {
         throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Bearbeitungsdaten.');
+      }
+      if (idea.research !== undefined) {
+        const research = idea.research;
+        let valid = !!research && typeof research === 'object' && ['pending', 'ready', 'failed'].includes(research.status) && typeof research.requestedAt === 'string';
+        if (valid) try { validateResearch(research); } catch { valid = false; }
+        if (!valid) throw new IdeaBoardValidationError('Die Datendatei enthält eine ungültige Recherche.');
       }
     }
     for (const key of ['rooms', 'reflections']) {

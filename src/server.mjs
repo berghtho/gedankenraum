@@ -161,7 +161,7 @@ export function createGedankenraumServer({
   storageConfigurable = !process.env.GEDANKENRAUM_HOME,
   selectDirectory = browseForDirectory,
 } = {}) {
-  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, readLink });
+  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, research: analyzer.research, readLink });
   let expectedOrigin = null;
   let expectedHost = null;
   let requestShutdown = () => {};

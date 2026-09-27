@@ -140,6 +140,13 @@ test('layout collapses descendants, promotes filtered or orphaned children, and 
   assert.doesNotMatch(markup, /<script>/);
 });
 
+test('mindmap colors thoughts adopted from an evaluation apart from their sources', () => {
+  const ideas = [{ id: 'source', title: 'Quelle' }, { id: 'adopted', title: 'Vorschlag', reflectionOrigin: { id: 'r', index: 0 } }];
+  const markup = mindmapMarkup(ideas, null, () => '#fff', { collapsed: new Set(), zoom: 1 });
+  assert.match(markup, /class="ib-mm-node is-derived"[^>]*data-mm-id="adopted"/);
+  assert.match(markup, /class="ib-mm-node"[^>]*data-mm-id="source"/);
+});
+
 test('active-only commands do not alter trash and malformed optional graph fields cannot be imported', async () => {
   const board = fixture();
   const { idea } = await board.execute({ type: 'capture', input: 'Aufbewahren' });

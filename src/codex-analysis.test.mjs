@@ -9,7 +9,7 @@ const request = {
   existingTopics: ['Architektur'],
 };
 
-test('Codex analyzer uses Luna xhigh through the resolved runtime', async () => {
+test('Codex analyzer uses Sol xhigh through the resolved runtime', async () => {
   const runtime = { executable: 'codex.exe', version: 'codex-cli 0.147.0' };
   let invocation;
   const analyzer = createCodexAnalyzer({
@@ -23,13 +23,25 @@ test('Codex analyzer uses Luna xhigh through the resolved runtime', async () => 
     },
   });
 
-  assert.deepEqual(await analyzer.status(), { available: true, engine: 'Codex · gpt-5.6-luna · xhigh' });
+  assert.deepEqual(await analyzer.status(), { available: true, engine: 'Codex · gpt-6-sol · xhigh' });
   const result = await analyzer.analyze(request);
   assert.equal(invocation.runtime, runtime);
   assert.match(invocation.prompt, /Nutze keine Tools/);
   assert.match(invocation.prompt, /<UNTRUSTED_SOURCE_[a-f0-9]+>/);
   assert.equal(result.analysis.topic, 'Architektur');
-  assert.equal(result.engine, 'Codex · gpt-5.6-luna · xhigh');
+  assert.equal(result.engine, 'Codex · gpt-6-sol · xhigh');
+});
+
+test('Codex prompt asks to reuse similar existing tags instead of inventing variants', async () => {
+  let prompt;
+  const analyzer = createCodexAnalyzer({
+    resolveRuntime: async () => ({ executable: 'codex.exe' }),
+    execute: async (invocation) => { prompt = invocation.prompt; return { title: 'T', summary: 'S', keyPoints: [], keywords: [], topic: 'KI' }; },
+  });
+  await analyzer.analyze({ ...request, existingTags: ['KI-Agenten', 'Kontext'] });
+  assert.match(prompt, /Bevorzuge bestehende Schlagwörter/);
+  assert.match(prompt, /Synonym, Übersetzung, andere Schreibweise, Einzahl oder Mehrzahl/);
+  assert.match(prompt, /Bestehende Schlagwörter \(häufigste zuerst\): KI-Agenten \| Kontext/);
 });
 
 test('Codex prompt requires source-grounded reporting without changing factual status', async () => {
@@ -64,12 +76,23 @@ test('Codex prompt requires source-grounded reporting without changing factual s
 
 test('Codex process arguments fix model and effort and remove interactive tools', () => {
   const args = codexArguments('schema.json', 'result.json');
-  assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.6-luna');
+  assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-sol');
   assert.equal(args[args.indexOf('--config') + 1], 'model_reasoning_effort="xhigh"');
+  assert.ok(!args.includes('web_search="live"'));
   assert.deepEqual(
     args.flatMap((value, index) => value === '--disable' ? [args[index + 1]] : []),
     ['shell_tool', 'browser_use', 'browser_use_external', 'computer_use', 'apps', 'code_mode_host', 'multi_agent'],
   );
+});
+
+test('research arguments add live web search through the code-mode host but keep shell, files and browser off', () => {
+  const args = codexArguments('schema.json', 'result.json', { webSearch: true });
+  assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-sol');
+  assert.ok(args.includes('web_search="live"'));
+  const disabled = args.flatMap((value, index) => value === '--disable' ? [args[index + 1]] : []);
+  assert.ok(!disabled.includes('code_mode_host'));
+  for (const feature of ['shell_tool', 'browser_use', 'browser_use_external', 'computer_use', 'apps', 'multi_agent', 'view_image', 'memories']) assert.ok(disabled.includes(feature), feature);
+  assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
 });
 
 test('Codex failure is visible and falls back to local analysis', async () => {

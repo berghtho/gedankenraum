@@ -34,7 +34,9 @@ die Eingabe bleibt bedienbar.
 - **Mindmap:** Ein Knoten kann eigene Untergedanken haben. Auf einem fokussierten Knoten erzeugt Tab einen Untergedanken, Enter einen Nachbarn, F2 öffnet den Editor. Pfeiltasten wechseln den Fokus; Shift+Tab verlässt den Knoten rückwärts. Alle Erstellaktionen gibt es auch als Schaltflächen. Zweige per Ziehen auf einen anderen Knoten oder über `Mehr → Verschieben` umhängen, ein-/ausklappen und zoomen. Freie Fläche ziehen zum Schwenken. Beim Filtern erscheinen Gedanken mit ausgeblendeten Eltern eigenständig. Zoom und eingeklappte Zweige gelten für den geöffneten Tab.
 
 - **Arbeitsräume:** Eine eigene Frage hält zusammengehörige Gedanken zusammen. Gedanken auf einen Raum in der Seitenleiste ziehen, über `Sammlung → Gedanken zuordnen` auswählen oder mehrere markierte Gedanken mit `In Raum …` zuordnen. Ein Gedanke kann in mehreren Räumen liegen. Neue Gedanken landen im aktiven Raum. Der aktive Raum steht oben als Titel und lässt sich dort mit `×` verlassen; gewechselt wird über `Sammlung → Arbeitsräume`. Der Raum ordnet, die Suche findet: Getipptes durchsucht die ganze Sammlung, Treffer außerhalb des Raums sind mit „nicht im Raum“ markiert und stehen hinter den Raumtreffern. Entfernen ändert nur die Zuordnung; Räume lassen sich archivieren und wiederherstellen.
-- **KI-Auswertungen:** 2 bis 12 Gedanken per Checkbox markieren und Gemeinsamkeiten, Widersprüche oder offene Fragen auswerten lassen. Die Arbeitsfrage und die verwendeten Textstände bleiben am Ergebnis gespeichert und anklickbar. Die Auswertung läuft im Hintergrund und setzt nach einem Neustart fort. Vorschläge verändern keine Originale. `ALS GEDANKEN ÜBERNEHMEN` speichert einen Vorschlag einmalig mit Quellenverbindungen im zugehörigen Raum.
+- **KI-Auswertungen:** 2 bis 12 Gedanken per Checkbox markieren und Gemeinsamkeiten, Widersprüche oder offene Fragen auswerten lassen. Die Arbeitsfrage und die verwendeten Textstände bleiben am Ergebnis gespeichert und anklickbar. Die Auswertung läuft im Hintergrund und setzt nach einem Neustart fort. Vorschläge verändern keine Originale. `ALS GEDANKEN ÜBERNEHMEN` speichert einen Vorschlag einmalig mit Quellenverbindungen im zugehörigen Raum. Übernommene Vorschläge sind violett hinterlegt und damit von ihren Quellen zu unterscheiden.
+- **Recherche:** `RECHERCHIEREN` lässt Codex einen Gedanken im Web recherchieren. Bei Fragen steht der Knopf direkt im Gedanken, sonst unter `Mehr`. Das Ergebnis erscheint als Abschnitt „Recherche“ mit Kurzantwort, Befunden und Quellenlinks; der eigene Wortlaut bleibt unverändert. Die Recherche läuft im Hintergrund nach anstehenden Analysen, lässt sich wiederholen und setzt nach einem Neustart fort. Ein früheres Ergebnis bleibt sichtbar, bis das neue da ist.
+- **Tags:** Tag-Vorschläge der Analyse greifen bevorzugt auf bestehende Tags zurück, wenn sie dasselbe meinen. Schreibvarianten wie „KI-Agent“ und „ki agenten“ oder „LLM“ und „LLMs“ landen beim vorhandenen Tag, auch beim eigenen Taggen.
 
 Die vorhandene Sammlung bleibt im Format `version: 1`. Hierarchie, Verbindungen, eigene Ergänzungen, Papierkorb, Räume und Auswertungen werden in derselben `ideas.json` gespeichert und beim Import mit übernommen. Alte Dateien ohne Räume oder Auswertungen bleiben kompatibel.
 
@@ -79,7 +81,7 @@ aktuellen Sammlung zusammengeführt; bereits vorhandene IDs werden übersprungen
 Alternativ kann mit `GEDANKENRAUM_HOME` ein anderer Ordner fest vorgegeben werden. In diesem Fall ist
 die Auswahl in der UI deaktiviert. Gedankenraum speichert selbst keine
 Daten in einer Cloud. Beim Erfassen werden Notiz oder gelesener Linkinhalt sowie die Namen bereits
-vorhandener Themen für die Analyse an Codex übertragen. Verwendet werden `gpt-5.6-luna` und
+vorhandener Themen und Tags für die Analyse an Codex übertragen. Verwendet werden `gpt-6-sol` und
 Reasoning Effort `xhigh`. Dafür muss die Codex-CLI installiert und über `codex login` angemeldet
 sein. Ist Codex nicht verfügbar, wird beim Erfassen sichtbar auf die einfache lokale Analyse zurückgefallen.
 
@@ -90,6 +92,12 @@ Kürzungen werden angezeigt. Unfertige Auswertungen aus importierten oder zusamm
 warten auf `ERNEUT VERSUCHEN`; der Import allein startet sie nicht. Bei Links nutzt die Auswertung den gespeicherten Inhalt und liest die
 Originalseite nicht erneut. Ergebnisse enthalten bis zu sechs Vorschläge mit geprüften Quellenverweisen.
 Bei Ausfall der KI erscheint ein Fehler mit Wiederholen-Schaltfläche; dafür gibt es keine lokale Ersatz-Auswertung.
+
+Für eine Recherche wird derselbe begrenzte Auszug des Gedankens an Codex übertragen. Codex sucht damit live
+im Web; die Suchbegriffe formuliert das Modell aus dem Gedanken. Dafür ist der Code-Mode-Host von Codex
+aktiv; Shell, Browser, Bilder und Memories bleiben ausgeschaltet. Damit hat Codex kein Werkzeug, um lokale
+Dateien zu lesen oder zu ändern. Gespeichert werden nur http(s)-Quellen. Die Befunde sind Vorschläge zur Prüfung.
+Unfertige Recherchen aus importierten oder zusammengeführten Dateien warten auf `ERNEUT VERSUCHEN`.
 
 ### Bestehende OpBoard-Gedanken übernehmen
 

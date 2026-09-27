@@ -8,9 +8,10 @@ import { promisify } from 'node:util';
 
 import { createLocalAnalyzer } from './local-analysis.mjs';
 import { REFLECTION_SCHEMA, reflectionPrompt, validateReflection } from './reflection-analysis.mjs';
+import { RESEARCH_SCHEMA, researchPrompt, validateResearch } from './research-analysis.mjs';
 
 const exec = promisify(execFile);
-const MODEL = 'gpt-5.6-luna';
+const MODEL = 'gpt-6-sol';
 const EFFORT = 'xhigh';
 const ENGINE = `Codex · ${MODEL} · ${EFFORT}`;
 const RESULT_LIMIT = 64 * 1024;
@@ -48,10 +49,12 @@ function promptFor({ input, source, existingTopics, existingTags = [] }) {
     'Was nicht im Quellmaterial belegt ist, lasse weg. Bei dünnem Quellmaterial antworte entsprechend knapp, statt Lücken zu füllen.',
     'Erzeuge einen kurzen sachlichen Titel, eine präzise Zusammenfassung, bis zu vier Kernpunkte, drei bis sechs Schlagwörter und ein stabiles breites Thema.',
     'Verwende eines der bestehenden Themen exakt, wenn es inhaltlich passt.',
-    'Schlagwörter dienen als Tag-Vorschläge: kurz (ein bis zwei Wörter), Großschreibung wie ein Eigenname, und ein bestehendes Schlagwort exakt wiederverwenden, wenn es passt.',
+    'Schlagwörter dienen als Tag-Vorschläge: kurz (ein bis zwei Wörter), Großschreibung wie ein Eigenname.',
+    'Bevorzuge bestehende Schlagwörter: Meint ein bestehendes Schlagwort dasselbe oder fast dasselbe (Synonym, Übersetzung, andere Schreibweise, Einzahl oder Mehrzahl, eng verwandter Begriff), übernimm es exakt in seiner Schreibweise.',
+    'Bilde ein neues Schlagwort nur, wenn keines der bestehenden passt.',
     `<${boundary}>`,
     `Bestehende Themen: ${topics}`,
-    `Bestehende Schlagwörter: ${tags}`,
+    `Bestehende Schlagwörter (häufigste zuerst): ${tags}`,
     `Quelltyp: ${source.kind}${source.url ? ` · ${source.url}` : ''}`,
     `Quellentitel: ${compact(source.pageTitle) || '(nicht vorhanden)'}`,
     compact(source.text || input).slice(0, 24_000),
@@ -103,18 +106,24 @@ export async function resolveCodexRuntime() {
   return { executable, version };
 }
 
-export function codexArguments(schemaPath, outputPath) {
+const TOOLS_OFF = ['shell_tool', 'browser_use', 'browser_use_external', 'computer_use', 'apps', 'code_mode_host', 'multi_agent'];
+
+// Die Websuche läuft über den Code-Mode-Host. Ohne Shell kann er weder Befehle ausführen noch Dateien lesen;
+// Bilder und Memories bleiben für die Recherche zusätzlich aus.
+export function codexArguments(schemaPath, outputPath, { webSearch = false } = {}) {
+  const disabled = webSearch
+    ? [...TOOLS_OFF.filter((feature) => feature !== 'code_mode_host'), 'view_image', 'image_generation', 'memories']
+    : TOOLS_OFF;
   return [
     'exec', '--model', MODEL, '--config', `model_reasoning_effort="${EFFORT}"`,
+    ...(webSearch ? ['--config', 'web_search="live"'] : []),
     '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config',
-    '--ignore-rules', '--disable', 'shell_tool', '--disable', 'browser_use',
-    '--disable', 'browser_use_external', '--disable', 'computer_use', '--disable', 'apps',
-    '--disable', 'code_mode_host', '--disable', 'multi_agent', '--output-schema', schemaPath,
+    '--ignore-rules', ...disabled.flatMap((feature) => ['--disable', feature]), '--output-schema', schemaPath,
     '--output-last-message', outputPath, '--color', 'never', '-',
   ];
 }
 
-export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SCHEMA, timeoutMs = 5 * 60_000 }) {
+export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SCHEMA, webSearch = false, timeoutMs = 5 * 60_000 }) {
   if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
   const home = await mkdtemp(join(tmpdir(), 'gedankenraum-codex-'));
   const schemaPath = join(home, 'schema.json');
@@ -122,7 +131,7 @@ export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SC
   try {
     await writeFile(schemaPath, JSON.stringify(schema), 'utf8');
     if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
-    const args = codexArguments(schemaPath, outputPath);
+    const args = codexArguments(schemaPath, outputPath, { webSearch });
     await new Promise((resolveRun, rejectRun) => {
       const child = spawn(runtime.executable, args, {
         cwd: home,
@@ -219,6 +228,17 @@ export function createCodexAnalyzer({
         if (controller.signal.aborted) throw controller.signal.reason;
         const value = await execute({ runtime: resolvedRuntime, prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA, signal: controller.signal });
         return { ...validateReflection(value, request.sources.map((source) => source.id), request.kind), engine: ENGINE };
+      } finally { active.delete(controller); }
+    },
+    async research(request) {
+      if (stopped) throw new Error('Gedankenraum wird beendet');
+      const controller = new AbortController();
+      active.add(controller);
+      try {
+        const resolvedRuntime = await runtime();
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const value = await execute({ runtime: resolvedRuntime, prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, timeoutMs: 15 * 60_000, signal: controller.signal });
+        return { ...validateResearch(value), engine: ENGINE };
       } finally { active.delete(controller); }
     },
     async stop() {

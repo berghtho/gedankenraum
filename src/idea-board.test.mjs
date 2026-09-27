@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
+import { IdeaBoard, IdeaBoardValidationError, preferExistingTags, similarTag } from './idea-board.mjs';
 
 let sequence = 0;
 const makeBoard = (overrides = {}) => new IdeaBoard({
@@ -43,6 +43,26 @@ test('capture, retopic and delete use the durable board interface', async () => 
   const removed = await board.execute({ type: 'delete', id: captured.idea.id });
   assert.equal(removed.idea.id, captured.idea.id);
   assert.deepEqual(board.snapshot().ideas, []);
+});
+
+test('tag suggestions and new tags take the spelling of a similar existing tag', async () => {
+  assert.ok(similarTag('KI-Agent', 'ki agenten'));
+  assert.ok(similarTag('LLM', 'LLMs'));
+  assert.ok(similarTag('Node.js', 'NodeJS'));
+  assert.ok(!similarTag('C++', 'C#'));
+  assert.ok(!similarTag('Spiel', 'Spieler'));
+  assert.deepEqual(preferExistingTags(['Agenten', 'agent', 'Neu'], ['Agent']), ['Agent', 'Neu']);
+  let seen;
+  const board = makeBoard({ analyze: async (request) => { seen = request; return { title: 'T', summary: 'S', keyPoints: [], keywords: ['coding agents', 'Kontexte', 'Neu'], topic: 'KI' }; } });
+  const first = await captureAnalyzed(board, { type: 'capture', input: 'Eins' });
+  const second = await captureAnalyzed(board, { type: 'capture', input: 'Zwei' });
+  await board.execute({ type: 'retag', id: first.idea.id, tags: ['Coding-Agents', 'Kontext', 'Rust'] });
+  const retagged = await board.execute({ type: 'retag', id: second.idea.id, tags: ['kontexte', 'coding agents'] });
+  assert.deepEqual(retagged.idea.tags, ['Kontext', 'Coding-Agents']);
+  const third = await captureAnalyzed(board, { type: 'capture', input: 'Drei' });
+  assert.equal(seen.existingTags.length, 3);
+  assert.equal(seen.existingTags.at(-1), 'Rust');
+  assert.deepEqual(third.idea.keywords, ['Coding-Agents', 'Kontext', 'Neu']);
 });
 
 test('a kept text note stays verbatim, keeps line breaks and is not read as a link', async () => {

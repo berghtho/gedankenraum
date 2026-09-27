@@ -85,7 +85,7 @@ const rowTags = (idea) => {
 const rowMarkup = (idea, selectedId, { color = null, meta = null, terms = [], tags = false } = {}) => {
   const snippet = snippetOf(idea, terms);
   const selected = idea.id === selectedId;
-  return `<article class="ib-thought-card"><button class="ib-row${selected ? ' is-selected' : ''}${snippet.hit ? ' has-hit' : ''}" type="button" data-idea-id="${html(idea.id)}"${selected ? ' aria-current="true"' : ''}>
+  return `<article class="ib-thought-card"><button class="ib-row${selected ? ' is-selected' : ''}${snippet.hit ? ' has-hit' : ''}${idea.reflectionOrigin ? ' is-derived' : ''}" type="button" data-idea-id="${html(idea.id)}"${selected ? ' aria-current="true"' : ''}>
   ${color ? `<span class="ib-topic-dot" style="background:${color}"></span>` : ''}
   <span class="ib-row-title">${markText(idea.title, terms, html)}</span>
   ${snippet.text ? `<span class="ib-row-excerpt">${markText(snippet.text, terms, html)}</span>` : ''}
@@ -109,7 +109,7 @@ const outsideRoom = (idea, room) => !!room && !room.ideaIds.includes(idea.id);
 function listMarkup(ideas, selectedId, terms, room) {
   return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, {
     terms,
-    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
+    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.reflectionOrigin ? 'KI-Vorschlag' : null, idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
   })).join('')}</div>`;
 }
 
@@ -125,7 +125,7 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
       color: colorFor(idea.topic), terms, tags: true,
-      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : sourceLabel(idea.source)].filter(Boolean).join(' · '),
+      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : idea.reflectionOrigin ? 'KI-VORSCHLAG' : sourceLabel(idea.source)].filter(Boolean).join(' · '),
     })).join('')}</div>
   </div>`).join('');
 }
@@ -193,6 +193,27 @@ function connectionCount(idea, ideas) {
   return count;
 }
 
+const isQuestion = (idea) => [idea.title, idea.input].some((text) => /\?\s*$/.test(text ?? ''));
+const researchButton = (label = 'RECHERCHIEREN') => `<button class="ib-small-btn" type="button" data-research title="Sendet den Gedanken an Codex und recherchiert im Web">${label}</button>`;
+
+// Recherche ergänzt den Gedanken um Webquellen; der eigene Wortlaut bleibt unberührt.
+// Bei Fragen steht der Knopf direkt im Gedanken, sonst unter „Mehr“.
+function researchMarkup(idea) {
+  const research = idea.research;
+  if (!research) return isQuestion(idea) ? `<div class="ib-research-start">${researchButton()}</div>` : '';
+  const pending = research.status === 'pending';
+  const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
+  const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p><span class="ib-research-sources">${finding.sources.map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span></div></li>`).join('')}</ol>` : '';
+  return `<section class="ib-research">
+    <span class="ib-detail-label">RECHERCHE${meta ? ` · ${html(meta)}` : ''}</span>
+    ${pending ? '<p class="ib-analysis-note" role="status">Codex recherchiert im Web. Das kann einige Minuten dauern; du kannst weiterarbeiten.</p>' : ''}
+    ${research.status === 'failed' ? `<p class="ib-analysis-note is-error">${html(research.error)}</p>` : ''}
+    ${research.summary ? `<p class="ib-research-summary">${html(research.summary)}</p>` : ''}
+    ${findings}
+    ${pending ? '' : researchButton(research.status === 'failed' ? 'ERNEUT VERSUCHEN' : 'ERNEUT RECHERCHIEREN')}
+  </section>`;
+}
+
 function panelHeadMarkup(idea) {
   const kind = idea ? `${kindLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}` : '';
   return `<div class="ib-panel-head"><span class="ib-detail-kind">${kind}</span><span class="ib-panel-actions">${idea ? '<button type="button" data-inline-edit>Weiterschreiben</button>' : ''}<button type="button" data-detail-close aria-label="Gedanken schließen">×</button></span></div>`;
@@ -229,6 +250,7 @@ function detailMarkup(idea, ideas, colorFor, terms) {
     </div>
     <article class="ib-text-body"${focusOnBody}>${body}</article>
     ${link ? points + notes : notes + points + summary}
+    ${researchMarkup(idea)}
     ${relatedMarkup(idea, ideas, colorFor)}
     <details class="ib-organize"><summary>Mehr${connections ? ` · ${connections} Verbindung${connections === 1 ? '' : 'en'}` : ''}</summary>
       <div class="ib-meta-grid">
@@ -237,7 +259,7 @@ function detailMarkup(idea, ideas, colorFor, terms) {
         <span class="ib-detail-label">ANALYSE</span><span>${html(idea.engine)} · ${html(date)}</span>
       </div>
       ${connectionsMarkup(idea, ideas)}
-      <div class="ib-organize-actions"><button class="ib-small-btn" type="button" data-edit-open>BEARBEITEN</button><button class="ib-small-btn is-danger" type="button" data-idea-delete>IN DEN PAPIERKORB</button></div>
+      <div class="ib-organize-actions">${idea.research || isQuestion(idea) ? '' : researchButton()}<button class="ib-small-btn" type="button" data-edit-open>BEARBEITEN</button><button class="ib-small-btn is-danger" type="button" data-idea-delete>IN DEN PAPIERKORB</button></div>
     </details>`;
 }
 
@@ -793,6 +815,9 @@ export function initGedankenraum({ root, getToken }) {
         const result = await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
         replaceIdea(result.idea);
         render();
+      } else if (target.closest?.('[data-research]')) {
+        await runCommand({ type: 'research', id: idea.id });
+        showMessage('Recherche gestartet. Das Ergebnis erscheint im Gedanken.');
       } else if (target.closest?.('[data-idea-delete]')) {
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
         ideas = ideas.filter((item) => item.id !== idea.id);
