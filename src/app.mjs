@@ -487,7 +487,13 @@ export function initGedankenraum({ root, getToken }) {
       const response = await fetch('/api/git');
       const git = await response.json();
       if (check === gitCheck) showGit(response.ok ? git : null);
-    } catch { if (check === gitCheck) showGit(null); }
+      return response.ok ? git : null;
+    } catch { if (check === gitCheck) showGit(null); return null; }
+  };
+  // Was der Start aus dem Remote-Repository geholt hat, erscheint einmal beim Laden.
+  const announceUpdate = (update) => {
+    if (update?.error) showMessage(`Nicht aktualisiert: ${update.error}`, true);
+    else if (update?.pulled) showMessage(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
   };
   const applySnapshot = (snapshot) => {
     if (!Array.isArray(snapshot.ideas)) return;
@@ -1071,6 +1077,7 @@ export function initGedankenraum({ root, getToken }) {
       render();
       if (!narrow.matches && !q('dialog[open]')) captureInput.focus();
       pollTimer = setTimeout(refresh, 1200);
+      loadGit().then((git) => announceUpdate(git?.update));
       fetch('/api/ideas/status').then((response) => response.json()).then((engine) => {
         status.textContent = engine.engine ?? 'Analyse nicht verfügbar';
         status.classList.toggle('is-fallback', !engine.available);

@@ -78,13 +78,16 @@ test('tag suggestions send only tag names with their counts and need a session',
   }
 });
 
-test('git push needs a session and is not offered outside a git repository', async () => {
+test('git push needs a session and is not offered outside a git repository; the launch update is reported', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-git-http-'));
-  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: createLocalAnalyzer() });
+  const update = { upstream: 'origin/main', pulled: 2 };
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: createLocalAnalyzer(), update });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
   try {
-    assert.equal((await fetch(`${origin}/api/git`).then((response) => response.json())).available, false);
+    const git = await fetch(`${origin}/api/git`).then((response) => response.json());
+    assert.equal(git.available, false);
+    assert.deepEqual(git.update, update);
     const refused = await fetch(`${origin}/api/git/push`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' });
     assert.equal(refused.status, 403);
     const failed = await fetch(`${origin}/api/git/push`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: '{}' });

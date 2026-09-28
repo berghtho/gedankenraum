@@ -31,10 +31,29 @@ export async function gitStatus(filePath) {
     const header = (key) => lines.find((line) => line.startsWith(`# branch.${key} `))?.slice(key.length + 10) ?? null;
     const branch = header('head');
     if (!branch || branch === '(detached)') return { available: false, reason: 'Im Repository ist kein Branch ausgecheckt.' };
-    const [, ahead = '0'] = /^\+(\d+) -\d+$/.exec(header('ab') ?? '') ?? [];
-    return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead) };
+    const [, ahead = '0', behind = '0'] = /^\+(\d+) -(\d+)$/.exec(header('ab') ?? '') ?? [];
+    return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead), behind: Number(behind) };
   } catch (error) {
     return { available: false, reason: error.message };
+  }
+}
+
+// Beim Start holt Gedankenraum neue Commits, aber nur per Fast-Forward: Es entsteht nie ein Merge,
+// der die JSON-Datei mit Konfliktmarkern beschädigen könnte. Offline startet die App ohne Update.
+export async function pullFastForward(filePath) {
+  const status = await gitStatus(filePath);
+  if (!status.available || !status.upstream) return null;
+  const { upstream } = status;
+  const cwd = dirname(filePath);
+  try {
+    await git(['fetch', '--quiet'], cwd, 15_000);
+    const fetched = await gitStatus(filePath);
+    if (!fetched.behind) return { upstream, pulled: 0 };
+    if (fetched.ahead) throw new Error(`Hier und in ${upstream} gibt es verschiedene neue Commits. Bitte im Repository zusammenführen.`);
+    await git(['merge', '--ff-only', '--quiet', '@{u}'], cwd);
+    return { upstream, pulled: fetched.behind };
+  } catch (error) {
+    return { upstream, pulled: 0, error: error.message };
   }
 }
 

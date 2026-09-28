@@ -9,7 +9,7 @@ import { execFile, spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
-import { commitAndPush, gitStatus } from './git-sync.mjs';
+import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
 import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
 
@@ -161,6 +161,7 @@ export function createGedankenraumServer({
   settingsPath = defaultSettingsPath(),
   storageConfigurable = !process.env.GEDANKENRAUM_HOME,
   selectDirectory = browseForDirectory,
+  update = null,
 } = {}) {
   const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, research: analyzer.research, readLink });
   let expectedOrigin = null;
@@ -253,7 +254,7 @@ export function createGedankenraumServer({
         return writeJson(res, 200, { ...result, directory: nextDirectory, filePath: board.path });
       }
       if (req.method === 'GET' && url.pathname === '/api/git') {
-        return writeJson(res, 200, await gitStatus(board.path));
+        return writeJson(res, 200, { ...(await gitStatus(board.path)), update });
       }
       if (req.method === 'POST' && url.pathname === '/api/git/push') {
         const refusal = guard(req);
@@ -350,7 +351,11 @@ export async function start({ open = false, preferredPort = Number(process.env.G
     if (open && instance.existing.url) openBrowser(instance.existing.url);
     return { existing: true, statePath, url: instance.existing.url ?? null };
   }
-  const app = createGedankenraumServer({ statePath });
+  // Vor dem ersten Lesen und Schreiben, damit keine Analyse in das Update hineinschreibt.
+  const update = await pullFastForward(statePath);
+  if (update?.error) console.log(`Nicht aktualisiert: ${update.error}`);
+  else if (update?.pulled) console.log(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
+  const app = createGedankenraumServer({ statePath, update });
   app.server.once('close', instance.release);
   try {
     const port = await listen(app.server, preferredPort);

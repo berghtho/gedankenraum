@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { commitAndPush, gitStatus } from './git-sync.mjs';
+import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
 
 // Echtes Git, aber ohne die Git-Konfiguration dieses Rechners.
 const config = join(mkdtempSync(join(tmpdir(), 'gedankenraum-gitconfig-')), 'gitconfig');
@@ -42,7 +42,7 @@ test('push is only offered for an ideas.json that git tracks', async () => {
   writeFileSync(join(work, 'andere', 'ideas.json'), '{}\n');
   assert.equal((await gitStatus(join(work, 'andere', 'ideas.json'))).available, false);
   await assert.rejects(commitAndPush(join(work, 'andere', 'ideas.json')), /nicht in Git eingecheckt/);
-  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0 });
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0 });
 });
 
 test('push commits only ideas.json and leaves other changes in the repository alone', async () => {
@@ -54,7 +54,7 @@ test('push commits only ideas.json and leaves other changes in the repository al
   assert.equal((await gitStatus(file)).changed, true);
 
   const result = await commitAndPush(file);
-  assert.deepEqual(result, { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, pushed: true });
+  assert.deepEqual(result, { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0, pushed: true });
   assert.equal(git(remote, 'log', '-1', '--format=%s', 'main').trim(), 'Gedankenraum: ideas.json aktualisiert');
   assert.equal(git(remote, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main').trim(), 'ideas.json');
   assert.equal(git(remote, 'show', 'main:ideas.json'), '{"version":1,"ideas":[{"id":"a"}]}\n');
@@ -71,11 +71,56 @@ test('a rejected push keeps the local commit and can be pushed again after a pul
 
   writeFileSync(file, '{"version":1,"ideas":[{"id":"b"}]}\n');
   await assert.rejects(commitAndPush(file), /neuere Änderungen.*pullen.*Commit bleibt lokal erhalten/);
-  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 1 });
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 1, behind: 0 });
 
   git(work, 'pull', '--no-rebase', '--no-edit');
   assert.equal((await gitStatus(file)).ahead, 2);
   assert.equal((await commitAndPush(file)).ahead, 0);
   assert.equal(git(remote, 'show', 'main:ideas.json'), '{"version":1,"ideas":[{"id":"b"}]}\n');
   assert.equal(git(remote, 'show', 'main:notes.txt'), 'Von woanders\n');
+});
+
+test('launch pulls new commits by fast-forward only and leaves diverged history alone', async () => {
+  const outside = mkdtempSync(join(tmpdir(), 'gedankenraum-nogit-'));
+  writeFileSync(join(outside, 'ideas.json'), '{}\n');
+  assert.equal(await pullFastForward(join(outside, 'ideas.json')), null);
+
+  const { work, file, clone } = repository();
+  assert.deepEqual(await pullFastForward(file), { upstream: 'origin/main', pulled: 0 });
+  const other = clone('other');
+  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  git(other, 'commit', '-am', 'Anderswo');
+  git(other, 'push');
+  assert.deepEqual(await pullFastForward(file), { upstream: 'origin/main', pulled: 1 });
+  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+
+  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote2"}]}\n');
+  git(other, 'commit', '-am', 'Noch einmal anderswo');
+  git(other, 'push');
+  writeFileSync(join(work, 'notes.txt'), 'Hier\n');
+  git(work, 'commit', '-am', 'Hier');
+  const head = git(work, 'rev-parse', 'HEAD');
+  const diverged = await pullFastForward(file);
+  assert.equal(diverged.pulled, 0);
+  assert.match(diverged.error, /verschiedene neue Commits/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), head);
+  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+});
+
+test('launch pull never overwrites an unpushed ideas.json and survives an unreachable remote', async () => {
+  const { work, file, clone } = repository();
+  const other = clone('other');
+  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  git(other, 'commit', '-am', 'Anderswo');
+  git(other, 'push');
+  writeFileSync(file, '{"version":1,"ideas":[{"id":"lokal"}]}\n');
+  const blocked = await pullFastForward(file);
+  assert.equal(blocked.pulled, 0);
+  assert.match(blocked.error, /ideas\.json/);
+  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"lokal"}]}\n');
+
+  git(work, 'remote', 'set-url', 'origin', join(work, '..', 'fehlt.git'));
+  const offline = await pullFastForward(file);
+  assert.equal(offline.pulled, 0);
+  assert.ok(offline.error);
 });
