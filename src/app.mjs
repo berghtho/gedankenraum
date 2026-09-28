@@ -346,6 +346,7 @@ export function initGedankenraum({ root, getToken }) {
   const storageDecision = q('[data-storage-decision]');
   const storageMerge = q('[data-storage-merge]');
   const storageReplace = q('[data-storage-replace]');
+  const gitPush = q('[data-git-push]');
   const tagDialog = q('[data-tag-dialog]');
   const tagName = q('[data-tag-name]');
   const tagHint = q('[data-tag-hint]');
@@ -468,8 +469,29 @@ export function initGedankenraum({ root, getToken }) {
     }
     if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
   };
+  // Liegt ideas.json eingecheckt in einem Git-Repository, bietet das Menü bei Änderungen „Push“ an.
+  // Geprüft wird kurz nach jeder Änderung der Sammlung und beim Öffnen des Menüs.
+  let gitTimer = null;
+  let gitCheck = 0;
+  const showGit = (git) => {
+    const pending = !!git?.available && (git.changed || git.ahead > 0);
+    gitPush.hidden = !pending;
+    if (!pending) return;
+    gitPush.textContent = git.changed ? 'PUSH · ideas.json geändert' : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen`;
+    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`;
+  };
+  const loadGit = async () => {
+    clearTimeout(gitTimer);
+    const check = ++gitCheck;
+    try {
+      const response = await fetch('/api/git');
+      const git = await response.json();
+      if (check === gitCheck) showGit(response.ok ? git : null);
+    } catch { if (check === gitCheck) showGit(null); }
+  };
   const applySnapshot = (snapshot) => {
     if (!Array.isArray(snapshot.ideas)) return;
+    clearTimeout(gitTimer); gitTimer = setTimeout(loadGit, 1000);
     ideas = snapshot.ideas;
     trash = snapshot.trash ?? [];
     canUndo = snapshot.canUndo ?? false;
@@ -723,6 +745,7 @@ export function initGedankenraum({ root, getToken }) {
   menuOpen.addEventListener('click', () => {
     menuList.hidden = !menuList.hidden;
     menuOpen.setAttribute('aria-expanded', String(!menuList.hidden));
+    if (!menuList.hidden) loadGit();
   });
   document.addEventListener('click', (event) => { if (!event.target.closest?.('[data-menu]')) closeMenu(); });
   const inField = (target) => !!target.closest?.('input, textarea, select, dialog, [contenteditable="true"]');
@@ -1007,6 +1030,20 @@ export function initGedankenraum({ root, getToken }) {
   for (const selector of ['[data-storage-close]', '[data-storage-cancel]']) {
     q(selector).addEventListener('click', () => storageDialog.close());
   }
+  gitPush.addEventListener('click', async () => {
+    gitPush.disabled = true;
+    showMessage('ideas.json wird committet und gepusht …');
+    try {
+      const git = await post('/api/git/push');
+      gitCheck += 1; showGit(git);
+      showMessage(git.pushed ? `ideas.json wurde nach ${git.upstream ?? git.branch} gepusht.` : 'Keine Änderungen zum Pushen.');
+    } catch (error) {
+      showMessage(error.message, true);
+      loadGit();
+    } finally {
+      gitPush.disabled = false;
+    }
+  });
 
   const refresh = async () => {
     const started = epoch;

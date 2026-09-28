@@ -78,6 +78,24 @@ test('tag suggestions send only tag names with their counts and need a session',
   }
 });
 
+test('git push needs a session and is not offered outside a git repository', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-git-http-'));
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: createLocalAnalyzer() });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+  try {
+    assert.equal((await fetch(`${origin}/api/git`).then((response) => response.json())).available, false);
+    const refused = await fetch(`${origin}/api/git/push`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(refused.status, 403);
+    const failed = await fetch(`${origin}/api/git/push`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: '{}' });
+    assert.equal(failed.status, 500);
+    assert.ok((await failed.json()).error);
+  } finally {
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});
+
 test('Windows data lives below LOCALAPPDATA unless explicitly configured', () => {
   assert.equal(
     defaultStatePath({ LOCALAPPDATA: 'C:\\Users\\Test\\AppData\\Local' }, 'win32'),

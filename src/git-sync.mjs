@@ -1,0 +1,59 @@
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
+
+// Liegt ideas.json eingecheckt in einem Git-Repository, bietet Gedankenraum bei Änderungen „Push“ an.
+// Committet wird nur ideas.json; andere Dateien im Repository bleiben, wie sie sind.
+const COMMIT_MESSAGE = 'Gedankenraum: ideas.json aktualisiert';
+
+function git(args, cwd, timeout = 15_000) {
+  return new Promise((resolveRun, rejectRun) => {
+    // Ohne Terminal darf Git nicht auf eine Passworteingabe warten; die Anmeldung übernimmt der Credential Helper.
+    execFile('git', args, {
+      cwd, timeout, windowsHide: true, maxBuffer: 1024 * 1024, encoding: 'utf8',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    }, (error, stdout, stderr) => {
+      if (!error) return resolveRun(stdout);
+      if (error.code === 'ENOENT') return rejectRun(new Error('Git wurde nicht gefunden.'));
+      if (error.killed) return rejectRun(new Error('Git hat nicht rechtzeitig geantwortet.'));
+      return rejectRun(new Error(String(stderr).trim() || error.message));
+    });
+  });
+}
+
+export async function gitStatus(filePath) {
+  const cwd = dirname(filePath);
+  const name = basename(filePath);
+  try {
+    if (!(await git(['ls-files', '--', name], cwd)).trim()) return { available: false, reason: `${name} ist nicht in Git eingecheckt.` };
+    // Ohne optionale Sperren kommt die Abfrage einem gleichzeitigen Git-Befehl im Terminal nicht in die Quere.
+    const lines = (await git(['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--', name], cwd)).split(/\r?\n/);
+    const header = (key) => lines.find((line) => line.startsWith(`# branch.${key} `))?.slice(key.length + 10) ?? null;
+    const branch = header('head');
+    if (!branch || branch === '(detached)') return { available: false, reason: 'Im Repository ist kein Branch ausgecheckt.' };
+    const [, ahead = '0'] = /^\+(\d+) -\d+$/.exec(header('ab') ?? '') ?? [];
+    return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead) };
+  } catch (error) {
+    return { available: false, reason: error.message };
+  }
+}
+
+export async function commitAndPush(filePath) {
+  const status = await gitStatus(filePath);
+  if (!status.available) throw new Error(status.reason);
+  if (!status.changed && !status.ahead) return { ...status, pushed: false };
+  const cwd = dirname(filePath);
+  if (status.changed) {
+    if (!existsSync(filePath)) throw new Error(`${basename(filePath)} fehlt und wird nicht als gelöscht committet.`);
+    await git(['commit', '--only', '-m', COMMIT_MESSAGE, '--', basename(filePath)], cwd);
+  }
+  try {
+    await git(['push'], cwd, 120_000);
+  } catch (error) {
+    // Zusammengeführt wird nicht automatisch: Ein Textmerge kann die JSON-Datei beschädigen.
+    const kept = status.changed ? ' Der Commit bleibt lokal erhalten.' : '';
+    if (/\[rejected\]/.test(error.message)) throw new Error(`Das Remote-Repository hat neuere Änderungen. Bitte im Repository zuerst pullen und dann erneut pushen.${kept}`);
+    throw new Error(`Push fehlgeschlagen: ${error.message}${kept}`);
+  }
+  return { ...(await gitStatus(filePath)), pushed: true };
+}

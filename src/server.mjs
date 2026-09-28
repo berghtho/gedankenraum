@@ -9,6 +9,7 @@ import { execFile, spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
+import { commitAndPush, gitStatus } from './git-sync.mjs';
 import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
 
@@ -165,6 +166,7 @@ export function createGedankenraumServer({
   let expectedOrigin = null;
   let expectedHost = null;
   let requestShutdown = () => {};
+  let pushing = null;
   const assets = new Map([
     ['/', { path: join(sourceHome, 'index.html'), type: 'text/html; charset=utf-8' }],
     ['/app.mjs', { path: join(sourceHome, 'app.mjs'), type: 'text/javascript; charset=utf-8' }],
@@ -249,6 +251,17 @@ export function createGedankenraumServer({
           throw error;
         }
         return writeJson(res, 200, { ...result, directory: nextDirectory, filePath: board.path });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/git') {
+        return writeJson(res, 200, await gitStatus(board.path));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/git/push') {
+        const refusal = guard(req);
+        if (refusal) return writeJson(res, 403, { error: refusal });
+        await readBody(req);
+        if (pushing) throw new IdeaBoardValidationError('Push läuft bereits.');
+        pushing = commitAndPush(board.path).finally(() => { pushing = null; });
+        return writeJson(res, 200, await pushing);
       }
       if (req.method === 'POST' && url.pathname === '/api/ideas/execute') {
         const refusal = guard(req);
