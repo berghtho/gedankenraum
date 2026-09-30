@@ -127,6 +127,11 @@ export const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return String(url ?? ''); }
 };
 
+// Als Link erscheint nur http(s); alles andere bleibt Text.
+export const isWebUrl = (url) => {
+  try { return ['http:', 'https:'].includes(new URL(String(url ?? '').trim()).protocol); } catch { return false; }
+};
+
 export const pathOf = (url) => {
   try { const parsed = new URL(url); const path = `${parsed.pathname}${parsed.search}`; return path === '/' ? '' : path; } catch { return ''; }
 };

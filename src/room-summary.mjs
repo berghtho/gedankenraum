@@ -1,4 +1,4 @@
-import { fold, hostOf, linkKey } from './search.mjs';
+import { fold, hostOf, isWebUrl, linkKey } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -52,7 +52,7 @@ export function digestMarkdown(digest, date = new Date()) {
     ...digest.evaluations.map((item) => `- ${KINDS[item.kind] ?? 'Auswertung'}: ${line(item.summary)}`),
   ]);
   section('Gedanken', digest.thoughts.map((idea) => `- **${line(idea.title)}**${thoughtNote(idea) ? ` (${thoughtNote(idea)})` : ''}${summaryOf(idea) ? ` – ${summaryOf(idea)}` : ''}`));
-  section('Quellen', digest.sources.map((source) => `- [${source.title.replace(/[[\]]/g, '')}](${source.url})`));
+  section('Quellen', digest.sources.map((source) => (isWebUrl(source.url) ? `- [${source.title.replace(/[[\]]/g, '')}](${source.url})` : `- ${source.title}`)));
   return `${out.join('\n')}\n`;
 }
 
@@ -85,7 +85,7 @@ export function digestMarkup(digest) {
       ...digest.evaluations.map((item) => `<li><span>${escape(KINDS[item.kind] ?? 'Auswertung')}: ${escape(shorten(item.summary, 240))}</span></li>`),
     ])}
     ${section('Gedanken', digest.thoughts.map((idea) => `<li>${open(idea, line(idea.title))}${thoughtNote(idea) ? `<small>${escape(thoughtNote(idea))}</small>` : ''}</li>`))}
-    ${section('Quellen', digest.sources.map((source) => `<li><a href="${escape(source.url)}" target="_blank" rel="noreferrer">${escape(source.title)}</a><small>${escape(hostOf(source.url))}</small></li>`))}
+    ${section('Quellen', digest.sources.map((source) => `<li>${isWebUrl(source.url) ? `<a href="${escape(source.url)}" target="_blank" rel="noreferrer">${escape(source.title)}</a>` : `<span>${escape(source.title)}</span>`}<small>${escape(hostOf(source.url))}</small></li>`))}
     ${digest.count ? '' : '<p>Dieser Raum ist noch leer.</p>'}`;
 }
 

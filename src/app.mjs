@@ -4,7 +4,7 @@ import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
-import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
@@ -206,7 +206,7 @@ function connectionCount(idea, ideas) {
 
 const researchButton = (label = 'RECHERCHIEREN') => `<button class="ib-small-btn" type="button" data-research title="Sendet den Gedanken an Codex und recherchiert im Web">${label}</button>`;
 // Quellen sind beim Speichern geprüft; als Link erscheint trotzdem nur http(s).
-const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => /^https?:\/\//i.test(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
+const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => isWebUrl(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
 const answerButton = (answered, label) => `<button class="ib-small-btn" type="button" data-question-answered="${answered}">${label}</button>`;
 
 // Eine Frage ist offen, bis sie als beantwortet markiert wird – von Hand oder nach einer Recherche.
@@ -260,7 +260,9 @@ function detailMarkup(idea, ideas, colorFor, terms) {
   const body = paragraphs.length
     ? paragraphs.map((part) => `<p>${mark(part)}</p>`).join('')
     : `<p class="ib-text-pending">${link && idea.analysisState === 'pending' ? 'Zusammenfassung folgt nach der Analyse.' : link ? 'Keine Zusammenfassung vorhanden.' : ''}</p>`;
-  const url = link && idea.url ? `<a class="ib-detail-url" href="${html(idea.url)}" target="_blank" rel="noreferrer"><b>${html(hostOf(idea.url))}</b><span>${html(pathOf(idea.url))}</span> ↗</a>` : '';
+  const url = !link || !idea.url ? ''
+    : isWebUrl(idea.url) ? `<a class="ib-detail-url" href="${html(idea.url)}" target="_blank" rel="noreferrer"><b>${html(hostOf(idea.url))}</b><span>${html(pathOf(idea.url))}</span> ↗</a>`
+      : `<p class="ib-detail-url">${html(idea.url)}</p>`;
   const copy = !link && (idea.input ?? '').trim() ? '<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button>' : '';
   const connections = connectionCount(idea, ideas);
   return `${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
