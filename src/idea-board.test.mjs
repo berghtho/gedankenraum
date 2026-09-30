@@ -46,6 +46,23 @@ test('capture, retopic and delete use the durable board interface', async () => 
   assert.deepEqual(board.snapshot().ideas, []);
 });
 
+test('the revision changes with every write and with external replacement, but not on reads', async () => {
+  const board = makeBoard();
+  const empty = board.snapshot().revision;
+  assert.equal(board.revision(), empty);
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Revision prüfen.' });
+  const afterCapture = board.snapshot().revision;
+  assert.notEqual(afterCapture, empty);
+  assert.equal(board.revision(), afterCapture);
+  await board.execute({ type: 'answer', id: captured.idea.id, answered: true });
+  const afterAnswer = board.revision();
+  assert.notEqual(afterAnswer, afterCapture);
+  const state = JSON.parse(readFileSync(board.path, 'utf8'));
+  state.ideas[0].notes = 'von außen';
+  writeFileSync(board.path, JSON.stringify(state));
+  assert.notEqual(board.revision(), afterAnswer);
+});
+
 test('manual tags and analysis keywords keep unrelated words that resemble plurals', async () => {
   const board = makeBoard({ analyze: async () => ({ title: 'Reisen', keywords: ['Reisen', 'Reis'] }) });
   const first = await captureAnalyzed(board, { type: 'capture', input: 'Reis kochen' });

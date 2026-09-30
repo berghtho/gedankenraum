@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
@@ -107,13 +107,25 @@ export class IdeaBoard {
     this.history = [];
     this.analysisTask = null;
     this.generation = 0;
+    this.writes = 0;
     this.stopped = false;
+  }
+
+  // Ändert sich bei jedem eigenen Schreiben und wenn die Datei von außen ersetzt wird.
+  revision() {
+    try {
+      const { mtimeMs, size } = statSync(this.path);
+      return `${this.generation}:${this.writes}:${mtimeMs}:${size}`;
+    } catch {
+      return `${this.generation}:${this.writes}:-`;
+    }
   }
 
   snapshot() {
     const state = this.#read();
     const ideas = state.ideas;
     return {
+      revision: this.revision(),
       ideas: structuredClone(ideas.filter((idea) => !idea.deletedAt)),
       trash: structuredClone(ideas.filter((idea) => idea.deletedAt)),
       canUndo: this.history.length > 0,
