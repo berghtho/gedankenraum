@@ -211,8 +211,9 @@ function researchMarkup(idea, ideas) {
   if (!research) return isQuestion(idea) ? `<div class="ib-research-start">${researchButton()}</div>` : '';
   const pending = research.status === 'pending';
   const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
-  const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
-  const taken = new Set(ideas.filter((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId).map((other) => other.researchOrigin.index));
+  // Der Server liefert jede Recherche mit resultId und erkennt übernommene Befunde nur daran.
+  const { resultId } = research;
+  const taken = new Set(ideas.filter((other) => other.researchOrigin?.ideaId === idea.id && other.researchOrigin.resultId === resultId).map((other) => other.researchOrigin.index));
   const adopted = (index) => taken.has(index);
   const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}" data-research-result="${html(resultId)}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
   const closes = research.status === 'ready' && isQuestion(idea) && !idea.answeredAt;
