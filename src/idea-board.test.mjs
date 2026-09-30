@@ -114,12 +114,16 @@ test('a kept text note stays verbatim, keeps line breaks and is not read as a li
   assert.equal(JSON.parse(readFileSync(board.path, 'utf8')).ideas[1].input, captured.idea.input);
 });
 
-test('text notes allow longer input than plain notes', async () => {
+test('every non-link capture is a text note with the long text limit; old notes still load', async () => {
   const board = makeBoard();
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), /als Textnotiz/);
-  const kept = await board.execute({ type: 'capture', input: 'x'.repeat(12_001), keep: true });
-  assert.equal(kept.idea.input.length, 12_001);
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep: true }), /60000/);
+  const plain = await board.execute({ type: 'capture', input: 'x'.repeat(12_001) });
+  assert.equal(plain.idea.source, 'text');
+  assert.equal(plain.idea.input.length, 12_001);
+  for (const keep of [false, true]) {
+    await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep }), /60000/);
+  }
+  await board.importState({ version: 1, ideas: [{ id: 'alt', title: 'Alte Notiz', input: 'Alte Notiz', source: 'note', analysisState: 'ready' }] });
+  assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'alt').source, 'note');
 });
 
 test('an unreadable link stays saved with a retryable failure', async () => {
@@ -140,8 +144,10 @@ test('an unreadable link stays saved with a retryable failure', async () => {
 
 test('invalid and oversized commands are rejected', async () => {
   const board = makeBoard();
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), IdeaBoardValidationError);
+  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001) }), IdeaBoardValidationError);
   await assert.rejects(() => board.execute({ type: 'launch' }), /unsupported command/);
+  for (const type of ['constructor', 'toString', '__proto__', 5]) await assert.rejects(() => board.execute({ type }), /unsupported command/);
+  for (const command of [null, [], 'capture']) await assert.rejects(() => board.execute(command), /command must be an object/);
 });
 
 test('concurrent captures serialize instead of losing a thought', async () => {
@@ -225,4 +231,105 @@ test('importing rejects unknown formats without changing the collection', async 
   await assert.rejects(() => board.importState({ version: 2, ideas: [] }), IdeaBoardValidationError);
   await assert.rejects(() => board.importState({ version: 1, ideas: [{}] }), IdeaBoardValidationError);
   assert.equal(readFileSync(board.path, 'utf8'), before);
+});
+
+test('thought links must be web addresses in imports and data files', async () => {
+  const board = makeBoard();
+  await captureAnalyzed(board, { type: 'capture', input: 'Bleibt erhalten' });
+  const before = readFileSync(board.path, 'utf8');
+  for (const url of ['javascript:alert(1)', 'data:text/html,x', 'kein Link', 42, ['https://example.com']]) {
+    await assert.rejects(() => board.importState({ version: 1, ideas: [{ id: 'bad', source: 'link', url }] }), /ungültigen Link/);
+  }
+  assert.equal(readFileSync(board.path, 'utf8'), before);
+  const imported = await board.importState({ version: 1, ideas: [{ id: 'link', source: 'link', url: 'https://example.com/a' }, { id: 'text', url: null }] });
+  assert.equal(imported.imported, 2);
+
+  const state = JSON.parse(readFileSync(board.path, 'utf8'));
+  state.ideas[0].url = 'javascript:alert(1)';
+  writeFileSync(board.path, JSON.stringify(state));
+  assert.throws(() => board.snapshot(), /ungültigen Link/);
+  await assert.rejects(() => makeBoard().switchStorage(board.path), /ungültigen Link/);
+});
+
+test('imported unfinished analysis waits for an explicit retry, also when merging storage', async () => {
+  let calls = 0;
+  const board = makeBoard({ analyze: async () => { calls += 1; return { title: 'Analysiert' }; } });
+  const pending = { id: 'offen', title: 'Offen', input: 'Offen', source: 'text', analysisState: 'pending', analysisRevision: 3, reanalyze: 'ready' };
+  await board.importState({ version: 1, ideas: [pending] }); await board.whenIdle();
+  assert.equal(calls, 0);
+  const imported = board.snapshot().ideas[0];
+  assert.equal(imported.analysisState, 'failed');
+  assert.match(imported.analysisWarning, /Unfertige Analyse importiert/);
+  assert.equal(imported.reanalyze, undefined);
+  await board.execute({ type: 'retry', id: 'offen' }); await board.whenIdle();
+  assert.equal(calls, 1);
+  assert.equal(board.snapshot().ideas[0].title, 'Analysiert');
+
+  const target = join(mkdtempSync(join(tmpdir(), 'gedankenraum-pending-analysis-')), 'ideas.json');
+  writeFileSync(target, JSON.stringify({ version: 1, ideas: [{ ...pending, id: 'extern' }] }));
+  await board.switchStorage(target, 'merge'); await board.whenIdle();
+  assert.equal(calls, 1);
+  assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'extern').analysisState, 'failed');
+});
+
+test('switching to the same file in other letter case keeps the collection on Windows', { skip: process.platform !== 'win32' }, async () => {
+  const board = makeBoard();
+  await captureAnalyzed(board, { type: 'capture', input: 'Bleibt' });
+  const path = board.path;
+  const switched = await board.switchStorage(path.toUpperCase());
+  assert.equal(switched.action, 'unchanged');
+  assert.equal(switched.canUndo, true);
+  assert.equal(board.path, path);
+});
+
+test('small input slips: unparseable links stay text, renaming ignores trashed spellings, moves store the parent id', async () => {
+  const board = makeBoard();
+  const broken = await board.execute({ type: 'capture', input: 'http://[' });
+  assert.equal(broken.idea.source, 'text');
+  assert.equal(broken.idea.url, null);
+
+  const kept = (await board.execute({ type: 'capture', input: 'Behalten' })).idea;
+  const trashed = (await board.execute({ type: 'capture', input: 'Weg' })).idea;
+  await board.whenIdle();
+  await board.execute({ type: 'retag', id: kept.id, tags: ['Alt'] });
+  await board.execute({ type: 'retag', id: trashed.id, tags: ['Neu'] });
+  await board.execute({ type: 'delete', id: trashed.id });
+  const renamed = await board.execute({ type: 'renametag', from: 'Alt', to: 'neu' });
+  assert.equal(renamed.tag, 'neu');
+  assert.equal(renamed.merged, false);
+  assert.deepEqual(board.snapshot().ideas.find((idea) => idea.id === kept.id).tags, ['neu']);
+
+  const moved = await board.execute({ type: 'move', id: kept.id, parentId: `  ${broken.idea.id} ` });
+  assert.equal(moved.idea.parentId, broken.idea.id);
+});
+
+test('an unchanged data file is not parsed again, copies stay independent and outside changes are read', async () => {
+  const board = makeBoard();
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Einmal lesen' });
+  board.snapshot();
+  const parse = JSON.parse;
+  let parses = 0;
+  JSON.parse = (...args) => { parses += 1; return parse(...args); };
+  try {
+    board.snapshot();
+    await board.execute({ type: 'answer', id: captured.idea.id, answered: true });
+    await board.execute({ type: 'undo' });
+    await board.whenIdle();
+  } finally { JSON.parse = parse; }
+  assert.equal(parses, 0);
+
+  const first = board.snapshot();
+  first.ideas[0].title = 'Verändert';
+  first.ideas[0].tags.push('Leck');
+  assert.equal(board.snapshot().ideas[0].title, 'Tiefe Module');
+  assert.deepEqual(board.snapshot().ideas[0].tags, []);
+
+  const state = JSON.parse(readFileSync(board.path, 'utf8'));
+  state.ideas[0].title = 'Von außen';
+  writeFileSync(board.path, JSON.stringify(state));
+  assert.equal(board.snapshot().ideas[0].title, 'Von außen');
+  const revision = board.revision();
+  await board.execute({ type: 'retopic', id: captured.idea.id, topic: 'Neu' });
+  assert.notEqual(board.revision(), revision);
+  assert.equal(JSON.parse(readFileSync(board.path, 'utf8')).ideas[0].title, 'Von außen');
 });

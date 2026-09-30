@@ -13,8 +13,12 @@ import { TAG_MERGE_SCHEMA, tagMergePrompt, validateTagMerges } from './tag-analy
 
 const exec = promisify(execFile);
 const MODEL = 'gpt-6-sol';
+// Gedanken werden oft und zügig analysiert; Auswertungen, Recherchen und Tag-Vorschläge denken gründlicher.
+const ANALYSIS_EFFORT = 'medium';
 const EFFORT = 'xhigh';
-const ENGINE = `Codex · ${MODEL} · ${EFFORT}`;
+const engineFor = (effort) => `Codex · ${MODEL} · ${effort}`;
+const ANALYSIS_ENGINE = engineFor(ANALYSIS_EFFORT);
+const ENGINE = engineFor(EFFORT);
 const RESULT_LIMIT = 64 * 1024;
 
 const RESULT_SCHEMA = {
@@ -111,12 +115,12 @@ const TOOLS_OFF = ['shell_tool', 'browser_use', 'browser_use_external', 'compute
 
 // Die Websuche läuft über den Code-Mode-Host. Ohne Shell kann er weder Befehle ausführen noch Dateien lesen;
 // Bilder und Memories bleiben für die Recherche zusätzlich aus.
-export function codexArguments(schemaPath, outputPath, { webSearch = false } = {}) {
+export function codexArguments(schemaPath, outputPath, { webSearch = false, effort = EFFORT } = {}) {
   const disabled = webSearch
     ? [...TOOLS_OFF.filter((feature) => feature !== 'code_mode_host'), 'view_image', 'image_generation', 'memories']
     : TOOLS_OFF;
   return [
-    'exec', '--model', MODEL, '--config', `model_reasoning_effort="${EFFORT}"`,
+    'exec', '--model', MODEL, '--config', `model_reasoning_effort="${effort}"`,
     ...(webSearch ? ['--config', 'web_search="live"'] : []),
     '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config',
     '--ignore-rules', ...disabled.flatMap((feature) => ['--disable', feature]), '--output-schema', schemaPath,
@@ -124,7 +128,7 @@ export function codexArguments(schemaPath, outputPath, { webSearch = false } = {
   ];
 }
 
-export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SCHEMA, webSearch = false, timeoutMs = 5 * 60_000 }) {
+export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SCHEMA, webSearch = false, effort = EFFORT, timeoutMs = 5 * 60_000 }) {
   if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
   const home = await mkdtemp(join(tmpdir(), 'gedankenraum-codex-'));
   const schemaPath = join(home, 'schema.json');
@@ -132,7 +136,7 @@ export async function executeCodex({ runtime, prompt, signal, schema = RESULT_SC
   try {
     await writeFile(schemaPath, JSON.stringify(schema), 'utf8');
     if (signal?.aborted) throw signal.reason ?? new Error('Codex-Analyse wurde beendet');
-    const args = codexArguments(schemaPath, outputPath, { webSearch });
+    const args = codexArguments(schemaPath, outputPath, { webSearch, effort });
     await new Promise((resolveRun, rejectRun) => {
       const child = spawn(runtime.executable, args, {
         cwd: home,
@@ -201,15 +205,15 @@ export function createCodexAnalyzer({
     async status() {
       try {
         await runtime();
-        return { available: true, engine: ENGINE };
+        return { available: true, engine: ANALYSIS_ENGINE };
       } catch (error) {
         return { available: false, engine: 'Lokale Analyse', reason: error.message };
       }
     },
     async analyze(request) {
       try {
-        const analysis = await invoke({ prompt: promptFor(request) });
-        return { analysis, engine: ENGINE };
+        const analysis = await invoke({ prompt: promptFor(request), effort: ANALYSIS_EFFORT });
+        return { analysis, engine: ANALYSIS_ENGINE };
       } catch (error) {
         if (stopped) throw error;
         const result = await fallback.analyze(request);
@@ -220,15 +224,15 @@ export function createCodexAnalyzer({
       }
     },
     async reflect(request) {
-      const value = await invoke({ prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA });
+      const value = await invoke({ prompt: reflectionPrompt(request), schema: REFLECTION_SCHEMA, effort: EFFORT });
       return { ...validateReflection(value, request.sources.map((source) => source.id), request.kind), engine: ENGINE };
     },
     async research(request) {
-      const value = await invoke({ prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, timeoutMs: 15 * 60_000 });
+      const value = await invoke({ prompt: researchPrompt(request), schema: RESEARCH_SCHEMA, webSearch: true, effort: EFFORT, timeoutMs: 15 * 60_000 });
       return { ...validateResearch(value), engine: ENGINE };
     },
     async suggestTagMerges(request) {
-      const value = await invoke({ prompt: tagMergePrompt(request), schema: TAG_MERGE_SCHEMA });
+      const value = await invoke({ prompt: tagMergePrompt(request), schema: TAG_MERGE_SCHEMA, effort: EFFORT });
       return { ...validateTagMerges(value, request.tags.map((tag) => tag.name)), engine: ENGINE };
     },
     async stop() {

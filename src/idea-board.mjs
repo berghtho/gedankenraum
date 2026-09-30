@@ -3,10 +3,9 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
-import { researchSource, validateResearch, validSources } from './research-analysis.mjs';
+import { researchSource, validateResearch, validSources, webUrl } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
 
-const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
 const MAX_TAGS = 12;
 const MAX_TAG_LENGTH = 40;
@@ -55,14 +54,24 @@ function normalizedAnalysis(value, fallbackTitle) {
 }
 
 const emptyState = () => ({ version: 1, ideas: [] });
+// Windows-Dateinamen unterscheiden keine Groß- und Kleinschreibung.
+const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+const fileKey = (path, stats) => `${path}|${stats.ino}:${stats.mtimeMs}:${stats.size}`;
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+// Bei doppelten IDs gilt wie bei find() der erste Eintrag.
+const byId = (items = []) => {
+  const map = new Map();
+  for (const item of items) if (!map.has(item.id)) map.set(item.id, item);
+  return map;
+};
 const mergeById = (current = [], incoming = []) => {
   const known = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => { if (known.has(item.id)) return false; known.add(item.id); return true; })];
 };
 
+// Nach jedem Lesen und Schreiben hat jede Recherche eine resultId; ein Befund hat sie, sobald sie sich ermitteln lässt.
 function normalizeResearchIds(ideas) {
   // Alte Recherchen verwendeten Zeitstempel als Identität, teils ohne Abschlusszeit.
   for (const idea of ideas) {
@@ -82,9 +91,16 @@ const importedReflections = (items = []) => items.map((item) => item.status === 
   ? { ...item, status: 'failed', error: 'Unfertige Auswertung importiert. Prüfe die Quellen und starte sie mit „Erneut versuchen“.' }
   : item);
 // Wie bei Auswertungen startet der Import allein keine Übertragung an Codex.
-const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => idea.research?.status === 'pending'
-  ? { ...idea, research: { ...idea.research, status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' } }
-  : idea);
+const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => {
+  if (idea.analysisState === 'pending') {
+    delete idea.reanalyze;
+    Object.assign(idea, { analysisState: 'failed', analysisWarning: 'Unfertige Analyse importiert. Starte sie mit „Erneut versuchen“.' });
+  }
+  if (idea.research?.status === 'pending') {
+    Object.assign(idea.research, { status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' });
+  }
+  return idea;
+});
 
 export class IdeaBoard {
   constructor({
@@ -105,9 +121,11 @@ export class IdeaBoard {
     this.makeId = makeId;
     this.pending = Promise.resolve();
     this.history = [];
-    this.analysisTask = null;
+    this.lanes = { analysis: { task: null, requested: false }, research: { task: null, requested: false } };
+    this.researching = null;
     this.generation = 0;
     this.writes = 0;
+    this.cache = null;
     this.stopped = false;
   }
 
@@ -122,12 +140,12 @@ export class IdeaBoard {
   }
 
   snapshot() {
-    const state = this.#read();
-    const ideas = state.ideas;
+    const revision = this.revision();
+    const state = this.#peek();
     return {
-      revision: this.revision(),
-      ideas: structuredClone(ideas.filter((idea) => !idea.deletedAt)),
-      trash: structuredClone(ideas.filter((idea) => idea.deletedAt)),
+      revision,
+      ideas: structuredClone(state.ideas.filter((idea) => !idea.deletedAt)),
+      trash: structuredClone(state.ideas.filter((idea) => idea.deletedAt)),
       canUndo: this.history.length > 0,
       rooms: structuredClone(state.rooms ?? []),
       reflections: structuredClone(state.reflections ?? []),
@@ -136,9 +154,10 @@ export class IdeaBoard {
 
   execute(command) {
     return this.#enqueue(async () => {
-      const before = this.#read();
-      const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#read(), command.type);
+      const before = this.#peek();
+      const handler = this.#handler(command);
+      const result = await handler.run(command);
+      if (handler.undoable) this.#remember(before, this.#peek(), command.type);
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -159,60 +178,72 @@ export class IdeaBoard {
     return this.#enqueue(() => this.#importState(imported)).then((result) => { this.resumeAnalysis(); return result; });
   }
 
-  async #execute(command) {
+  // Eigene Änderungen landen im Undo-Verlauf; KI-Aufträge, Wiederholungen und Undo selbst nicht.
+  #commands = {
+    capture: { run: (command) => this.#capture(command), undoable: true },
+    roomCreate: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomRename: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomMembers: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomArchive: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomRestore: { run: (command) => this.#roomCommand(command), undoable: true },
+    reflect: { run: (command) => this.#startReflection(command), undoable: false },
+    retryReflection: { run: (command) => this.#retryReflection(command), undoable: false },
+    acceptReflection: { run: (command) => this.#acceptReflection(command), undoable: true },
+    research: { run: (command) => this.#startResearch(command), undoable: false },
+    acceptResearch: { run: (command) => this.#acceptResearch(command), undoable: true },
+    answer: { run: (command) => this.#answer(command), undoable: true },
+    mergeTags: { run: (command) => this.#mergeTags(command), undoable: true },
+    reanalyzeAll: { run: () => this.#reanalyzeAll(), undoable: false },
+    cancelReanalysis: { run: () => this.#cancelReanalysis(), undoable: false },
+    retry: { run: (command) => this.#retry(command), undoable: false },
+    retopic: { run: (command) => this.#retopic(command), undoable: true },
+    retag: { run: (command) => this.#retag(command), undoable: true },
+    renametag: { run: (command) => this.#renameTag(command), undoable: true },
+    delete: { run: (command) => this.#delete(command), undoable: true },
+    restore: { run: (command) => this.#restore(command), undoable: true },
+    edit: { run: (command) => this.#edit(command), undoable: true },
+    undo: { run: () => this.#undo(), undoable: false },
+    move: { run: (command) => this.#move(command), undoable: true },
+    connect: { run: (command) => this.#connect(command), undoable: true },
+    disconnect: { run: (command) => this.#connect(command), undoable: true },
+  };
+
+  #handler(command) {
     if (!command || typeof command !== 'object' || Array.isArray(command)) {
       throw new IdeaBoardValidationError('command must be an object');
     }
-    if (command.type === 'capture') return this.#capture(command);
-    if (['roomCreate', 'roomRename', 'roomMembers', 'roomArchive', 'roomRestore'].includes(command.type)) return this.#roomCommand(command);
-    if (command.type === 'reflect') return this.#startReflection(command);
-    if (command.type === 'acceptReflection') return this.#acceptReflection(command);
-    if (command.type === 'research') return this.#startResearch(command);
-    if (command.type === 'acceptResearch') return this.#acceptResearch(command);
-    if (command.type === 'answer') return this.#answer(command);
-    if (command.type === 'mergeTags') return this.#mergeTags(command);
-    if (command.type === 'reanalyzeAll') return this.#reanalyzeAll();
-    if (command.type === 'cancelReanalysis') return this.#cancelReanalysis();
-    if (command.type === 'retryReflection') {
-      const state = this.#read();
-      const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
-      if (!reflection || reflection.status !== 'failed') throw new IdeaBoardValidationError('Keine fehlgeschlagene Auswertung gefunden.');
-      reflection.status = 'pending'; reflection.error = null;
-      this.#write(state);
-      return { reflection: structuredClone(reflection) };
-    }
-    if (command.type === 'retopic') return this.#retopic(command);
-    if (command.type === 'retag') return this.#retag(command);
-    if (command.type === 'renametag') return this.#renameTag(command);
-    if (command.type === 'delete') return this.#delete(command);
-    if (command.type === 'restore') return this.#restore(command);
-    if (command.type === 'edit') return this.#edit(command);
-    if (command.type === 'undo') return this.#undo();
-    if (command.type === 'move') return this.#move(command);
-    if (command.type === 'connect' || command.type === 'disconnect') return this.#connect(command);
-    if (command.type === 'retry') {
-      const state = this.#read();
-      const idea = this.#active(state, command.id);
-      this.#queueIdea(idea);
-      this.#write(state);
-      return { idea: structuredClone(idea) };
-    }
-    throw new IdeaBoardValidationError(`unsupported command: ${clean(command.type, '(empty)')}`);
+    if (!Object.hasOwn(this.#commands, command.type)) throw new IdeaBoardValidationError(`unsupported command: ${clean(command.type, '(empty)')}`);
+    return this.#commands[command.type];
+  }
+
+  #retry(command) {
+    const state = this.#read();
+    const idea = this.#active(state, command.id);
+    this.#queueIdea(idea);
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  #retryReflection(command) {
+    const state = this.#read();
+    const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
+    if (!reflection || reflection.status !== 'failed') throw new IdeaBoardValidationError('Keine fehlgeschlagene Auswertung gefunden.');
+    reflection.status = 'pending'; reflection.error = null;
+    this.#write(state);
+    return { reflection: structuredClone(reflection) };
   }
 
   async #capture(command) {
+    // keep bewahrt einen Link als Text auf; alles andere außer Links ist ohnehin Text.
     const keep = command.keep === true;
-    const raw = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
-    const input = raw;
+    const input = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
     if (!input) throw new IdeaBoardValidationError('Bitte eine Notiz, einen Text oder einen Link eingeben.');
-    if (keep && input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Textnotiz überschreitet ${MAX_TEXT} Zeichen.`);
-    if (!keep && input.length > MAX_INPUT) {
-      throw new IdeaBoardValidationError(`Eingabe überschreitet ${MAX_INPUT} Zeichen. Längere Texte als Textnotiz aufbewahren.`);
-    }
+    if (input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Text überschreitet ${MAX_TEXT} Zeichen.`);
 
     const state = this.#read();
     const room = command.roomId ? this.#room(state, command.roomId) : null;
-    const isLink = !keep && /^https?:\/\/\S+$/i.test(input);
+    // Nicht lesbare Adressen wie „http://[“ bleiben Text.
+    const isLink = !keep && /^https?:\/\/\S+$/i.test(input) && !!webUrl(input);
     const parent = command.parentId ? this.#active(state, command.parentId) : null;
     const title = clean(command.title) || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
     const createdAt = this.now().toISOString();
@@ -223,7 +254,8 @@ export class IdeaBoard {
       topic: parent?.topic ?? clean(command.topic, 'Unsortiert').slice(0, 80),
       // Schlagwörter (keywords) sind Vorschläge der Analyse; tags bestätigt der Mensch.
       tags: [],
-      source: isLink ? 'link' : keep ? 'text' : 'note',
+      // Ältere Gedanken können noch source 'note' tragen; neue sind 'link' oder 'text'.
+      source: isLink ? 'link' : 'text',
       url: isLink ? input : null,
       input,
       createdAt,
@@ -241,8 +273,10 @@ export class IdeaBoard {
   #remember(before, after, commandType) {
     const patches = [];
     const undoFields = ['mergeTags', 'renametag'].includes(commandType) ? [...USER_FIELDS, 'keywords'] : USER_FIELDS;
+    const previousIdeas = byId(before.ideas);
+    const previousRooms = byId(before.rooms);
     for (const idea of after.ideas) {
-      const previous = before.ideas.find((item) => item.id === idea.id);
+      const previous = previousIdeas.get(idea.id);
       if (!previous) { patches.push({ id: idea.id, captured: true }); continue; }
       const fields = undoFields.filter((key) => !equal(previous[key], idea[key]));
       if (fields.length) patches.push({
@@ -251,7 +285,7 @@ export class IdeaBoard {
       });
     }
     for (const room of after.rooms ?? []) {
-      const previous = (before.rooms ?? []).find((item) => item.id === room.id);
+      const previous = previousRooms.get(room.id);
       if (!previous) { patches.push({ id: room.id, collection: 'rooms', captured: true }); continue; }
       const fields = ['question', 'ideaIds', 'archivedAt'].filter((key) => !equal(previous[key], room[key]));
       if (fields.length) patches.push({ id: room.id, collection: 'rooms', fields: fields.map((key) => ({ key, before: previous[key], after: room[key] })) });
@@ -292,22 +326,28 @@ export class IdeaBoard {
   }
 
   resumeAnalysis() {
+    for (const name of Object.keys(this.lanes)) this.#startLane(name);
+  }
+
+  // Analysen und Recherchen laufen in getrennten Spuren: Eine lange Recherche hält neue Gedanken nicht auf.
+  #startLane(name) {
     if (this.stopped) return;
-    if (this.analysisTask) { this.analysisRequested = true; return; }
-    this.analysisRequested = false;
-    this.analysisTask = this.#analyzePending().catch((error) => {
+    const lane = this.lanes[name];
+    if (lane.task) { lane.requested = true; return; }
+    lane.requested = false;
+    lane.task = (name === 'research' ? this.#researchPending() : this.#analyzePending()).catch((error) => {
       // Leave pending work durable on disk failure. Retry or restart can resume it.
       this.lastAnalysisError = error.message;
     }).finally(() => {
-      this.analysisTask = null;
-      if (this.analysisRequested) this.resumeAnalysis();
+      lane.task = null;
+      if (lane.requested) this.#startLane(name);
     });
   }
 
   async whenIdle() {
     await this.pending;
     this.resumeAnalysis();
-    while (this.analysisTask) await this.analysisTask;
+    for (let tasks; (tasks = Object.values(this.lanes).map((lane) => lane.task).filter(Boolean)).length;) await Promise.all(tasks);
     await this.pending;
   }
 
@@ -316,65 +356,77 @@ export class IdeaBoard {
   async #analyzePending() {
     while (!this.stopped) {
       await this.pending;
-      const state = this.#read();
+      const state = this.#peek();
       const reflection = (state.reflections ?? []).find((item) => item.status === 'pending');
-      if (reflection) { await this.#analyzeReflection(reflection); continue; }
-      const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending');
-      if (!idea) {
-        // Recherchen laufen nach den Analysen, damit sie auf fertigen Zusammenfassungen aufbauen.
-        const researched = state.ideas.find((item) => !item.deletedAt && item.research?.status === 'pending');
-        if (!researched) return;
-        await this.#runResearch(researched);
-        continue;
-      }
-      const generation = this.generation;
-      const revision = idea.analysisRevision;
-      let result;
-      let failure;
-      try {
-        let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: null };
-        if (idea.source === 'link') {
-          const page = await this.readLink(idea.url);
-          source = { kind: 'link', text: page.text, url: page.url, pageTitle: page.title ?? null };
-        }
-        result = await this.analyze({
-          input: idea.input, source,
-          existingTopics: [...new Set(state.ideas.filter((item) => !item.deletedAt && item.topic !== 'Unsortiert').map((item) => item.topic))],
-          existingTags: knownTags(state),
-        });
-      } catch (error) { failure = error.message || 'Analyse fehlgeschlagen.'; }
-      await this.#enqueue(() => {
-        if (this.stopped || generation !== this.generation) return;
-        const current = this.#read();
-        const target = current.ideas.find((item) => item.id === idea.id);
-        if (!target || target.deletedAt || target.analysisRevision !== revision || target.analysisState !== 'pending') return;
-        const refresh = target.reanalyze === 'ready';
-        delete target.reanalyze;
-        if (refresh && (failure || result.warning)) {
-          // Eine Neu-Analyse ersetzt eine fertige Analyse nie durch einen Fehler oder die lokale Ersatz-Analyse.
-          target.analysisState = 'ready';
-          target.analysisWarning = `Neu-Analyse nicht möglich${failure ? `: ${failure.replace(/[.\s]+$/, '')}` : ', weil Codex nicht verfügbar war'}. Die bisherige Analyse bleibt.`;
-          this.#write(current);
-          return;
-        }
-        if (failure) {
-          target.analysisState = 'failed';
-          target.analysisWarning = failure;
-        } else {
-          const analysis = normalizedAnalysis(result.analysis ?? result, idea.title);
-          analysis.keywords = preferExistingTags(analysis.keywords, knownTags(current));
-          for (const [key, value] of Object.entries(analysis)) {
-            if (!(target.manualFields ?? []).includes(key)) target[key] = value;
-          }
-          target.engine = clean(result.engine, 'Lokale Analyse');
-          target.analysisState = 'ready';
-          target.analysisResultRevision = revision ?? 0;
-          target.analysisWarning = clean(result.warning) || null;
-        }
-        target.updatedAt = this.now().toISOString();
-        this.#write(current);
-      });
+      if (reflection) { await this.#analyzeReflection(structuredClone(reflection)); continue; }
+      // Ein Gedanke in Recherche wartet, damit eine neue Analyse ihm nicht die recherchierte Quelle verändert.
+      const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending' && item.id !== this.researching);
+      if (!idea) return;
+      await this.#analyzeIdea(idea, state);
+      this.#startLane('research');
     }
+  }
+
+  async #researchPending() {
+    while (!this.stopped) {
+      await this.pending;
+      // Eine Recherche wartet nur auf die Analyse desselben Gedankens und baut auf ihrer Zusammenfassung auf.
+      const idea = this.#peek().ideas.find((item) => !item.deletedAt && item.research?.status === 'pending' && item.analysisState !== 'pending');
+      if (!idea) return;
+      this.researching = idea.id;
+      try { await this.#runResearch(idea); } finally { this.researching = null; }
+      this.#startLane('analysis');
+    }
+  }
+
+  async #analyzeIdea(idea, state) {
+    const generation = this.generation;
+    const revision = idea.analysisRevision;
+    let result;
+    let failure;
+    try {
+      let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: null };
+      if (idea.source === 'link') {
+        const page = await this.readLink(idea.url);
+        source = { kind: 'link', text: page.text, url: page.url, pageTitle: page.title ?? null };
+      }
+      result = await this.analyze({
+        input: idea.input, source,
+        existingTopics: [...new Set(state.ideas.filter((item) => !item.deletedAt && item.topic !== 'Unsortiert').map((item) => item.topic))],
+        existingTags: knownTags(state),
+      });
+    } catch (error) { failure = error.message || 'Analyse fehlgeschlagen.'; }
+    await this.#enqueue(() => {
+      if (this.stopped || generation !== this.generation) return;
+      const current = this.#read();
+      const target = current.ideas.find((item) => item.id === idea.id);
+      if (!target || target.deletedAt || target.analysisRevision !== revision || target.analysisState !== 'pending') return;
+      const refresh = target.reanalyze === 'ready';
+      delete target.reanalyze;
+      if (refresh && (failure || result.warning)) {
+        // Eine Neu-Analyse ersetzt eine fertige Analyse nie durch einen Fehler oder die lokale Ersatz-Analyse.
+        target.analysisState = 'ready';
+        target.analysisWarning = `Neu-Analyse nicht möglich${failure ? `: ${failure.replace(/[.\s]+$/, '')}` : ', weil Codex nicht verfügbar war'}. Die bisherige Analyse bleibt.`;
+        this.#write(current);
+        return;
+      }
+      if (failure) {
+        target.analysisState = 'failed';
+        target.analysisWarning = failure;
+      } else {
+        const analysis = normalizedAnalysis(result.analysis ?? result, idea.title);
+        analysis.keywords = preferExistingTags(analysis.keywords, knownTags(current));
+        for (const [key, value] of Object.entries(analysis)) {
+          if (!(target.manualFields ?? []).includes(key)) target[key] = value;
+        }
+        target.engine = clean(result.engine, 'Lokale Analyse');
+        target.analysisState = 'ready';
+        target.analysisResultRevision = revision ?? 0;
+        target.analysisWarning = clean(result.warning) || null;
+      }
+      target.updatedAt = this.now().toISOString();
+      this.#write(current);
+    });
   }
 
   #active(state, id) {
@@ -503,11 +555,11 @@ export class IdeaBoard {
     const research = question.research;
     const finding = research?.findings?.[command.index];
     if (!Number.isInteger(command.index) || command.index < 0 || !finding) throw new IdeaBoardValidationError('Befund wurde nicht gefunden.');
-    const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
+    const { resultId } = research;
     if (typeof command.resultId !== 'string' || command.resultId !== resultId) throw new IdeaBoardValidationError('Die Recherche hat sich geändert. Bitte den aktuellen Befund auswählen.');
     const origin = { ideaId: question.id, resultId, completedAt: research.completedAt ?? null, index: command.index };
     const sameOrigin = (idea) => idea.researchOrigin?.ideaId === origin.ideaId
-      && (idea.researchOrigin.resultId ?? idea.researchOrigin.completedAt) === resultId && idea.researchOrigin.index === origin.index;
+      && idea.researchOrigin.resultId === resultId && idea.researchOrigin.index === origin.index;
     const rooms = (state.rooms ?? []).filter((room) => !room.archivedAt && room.ideaIds.includes(question.id));
     const stamp = this.now().toISOString();
     const existing = state.ideas.find(sameOrigin);
@@ -672,14 +724,15 @@ export class IdeaBoard {
   #move(command) {
     const state = this.#read();
     const idea = this.#active(state, command.id);
-    let parent = command.parentId ? this.#active(state, command.parentId) : null;
+    const target = command.parentId ? this.#active(state, command.parentId) : null;
+    let parent = target;
     const visited = new Set([idea.id]);
     while (parent) {
       if (visited.has(parent.id)) throw new IdeaBoardValidationError('Ein Zweig kann nicht unter sich selbst liegen.');
       visited.add(parent.id);
       parent = state.ideas.find((item) => item.id === parent.parentId);
     }
-    idea.parentId = command.parentId || null;
+    idea.parentId = target?.id ?? null;
     idea.updatedAt = this.now().toISOString();
     this.#write(state);
     return { idea: structuredClone(idea) };
@@ -736,11 +789,11 @@ export class IdeaBoard {
     const to = cleanTag(command.to);
     if (!from || !to) throw new IdeaBoardValidationError('Tag darf nicht leer sein.');
     const state = this.#read();
-    const existing = state.ideas.flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
+    const existing = state.ideas.filter((idea) => !idea.deletedAt).flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
     const target = existing ?? to;
     const merged = !!existing && !sameTag(from, to);
     const changed = this.#replaceTags(state, [from], target);
-    return { ideas: structuredClone(state.ideas), tag: target, merged, changed };
+    return { tag: target, merged, changed };
   }
 
   #delete(command) {
@@ -753,7 +806,7 @@ export class IdeaBoard {
   }
 
   #switchStorage(path, mode) {
-    if (path === this.path) return { ...this.snapshot(), created: false, action: 'unchanged' };
+    if (samePath(path, this.path)) return { ...this.snapshot(), created: false, action: 'unchanged' };
     const created = !existsSync(path);
     const current = this.#read();
     let state = current;
@@ -802,8 +855,18 @@ export class IdeaBoard {
     };
   }
 
+  // Die Datei wird nur neu gelesen und geprüft, wenn sie sich geändert hat. Der Zwischenstand wird nie verändert;
+  // wer ändern will, holt sich mit #read() eine eigene Kopie.
+  #peek() {
+    const stats = statSync(this.path, { throwIfNoEntry: false });
+    if (!stats) return emptyState();
+    const key = fileKey(this.path, stats);
+    if (this.cache?.key !== key) this.cache = { key, state: this.#readFrom(this.path) };
+    return this.cache.state;
+  }
+
   #read() {
-    return existsSync(this.path) ? this.#readFrom(this.path) : emptyState();
+    return structuredClone(this.#peek());
   }
 
   #readFrom(path) {
@@ -824,6 +887,10 @@ export class IdeaBoard {
     for (const idea of state.ideas) {
       if (idea.parentId != null && (typeof idea.parentId !== 'string' || !idea.parentId.trim())) {
         throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen übergeordneten Gedanken.');
+      }
+      // Links landen im href der Oberfläche; nur http(s) ist erlaubt.
+      if (idea.url != null && (typeof idea.url !== 'string' || !webUrl(idea.url))) {
+        throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Link.');
       }
       if (idea.relations !== undefined && (!Array.isArray(idea.relations) || idea.relations.some((edge) => !edge
         || typeof edge.targetId !== 'string' || !edge.targetId.trim() || !RELATIONS.has(edge.type)))) {
@@ -880,5 +947,9 @@ export class IdeaBoard {
 
   #write(state) {
     atomicReplaceText(this.path, `${JSON.stringify(state, null, 2)}\n`);
+    this.writes += 1;
+    const saved = structuredClone(state);
+    normalizeResearchIds(saved.ideas);
+    try { this.cache = { key: fileKey(this.path, statSync(this.path)), state: saved }; } catch { this.cache = null; }
   }
 }

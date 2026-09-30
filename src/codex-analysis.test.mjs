@@ -10,7 +10,7 @@ const request = {
   existingTopics: ['Architektur'],
 };
 
-test('Codex analyzer uses Sol xhigh through the resolved runtime', async () => {
+test('Codex analyzer uses Sol medium for thoughts through the resolved runtime', async () => {
   const runtime = { executable: 'codex.exe', version: 'codex-cli 0.147.0' };
   let invocation;
   const analyzer = createCodexAnalyzer({
@@ -24,13 +24,29 @@ test('Codex analyzer uses Sol xhigh through the resolved runtime', async () => {
     },
   });
 
-  assert.deepEqual(await analyzer.status(), { available: true, engine: 'Codex · gpt-6-sol · xhigh' });
+  assert.deepEqual(await analyzer.status(), { available: true, engine: 'Codex · gpt-6-sol · medium' });
   const result = await analyzer.analyze(request);
   assert.equal(invocation.runtime, runtime);
   assert.match(invocation.prompt, /Nutze keine Tools/);
   assert.match(invocation.prompt, /<UNTRUSTED_SOURCE_[a-f0-9]+>/);
   assert.equal(result.analysis.topic, 'Architektur');
-  assert.equal(result.engine, 'Codex · gpt-6-sol · xhigh');
+  assert.equal(result.engine, 'Codex · gpt-6-sol · medium');
+  assert.equal(invocation.effort, 'medium');
+});
+
+test('reflections, research and tag suggestions keep xhigh effort', async () => {
+  const efforts = [];
+  const analyzer = createCodexAnalyzer({
+    resolveRuntime: async () => ({ executable: 'codex.exe' }),
+    execute: async ({ effort, schema }) => { efforts.push(effort); return schema === TAG_MERGE_SCHEMA ? { groups: [] } : { summary: 'Leer', findings: [] }; },
+  });
+  const results = [
+    await analyzer.reflect({ kind: 'questions', sources: [{ id: 'q', input: 'Frage?' }] }),
+    await analyzer.research({ source: { id: 'q', input: 'Frage?' } }),
+    await analyzer.suggestTagMerges({ tags: [{ name: 'KI', count: 1 }] }),
+  ];
+  assert.deepEqual(efforts, ['xhigh', 'xhigh', 'xhigh']);
+  assert.ok(results.every((result) => result.engine === 'Codex · gpt-6-sol · xhigh'));
 });
 
 test('Codex prompt asks to reuse similar existing tags instead of inventing variants', async () => {
@@ -98,6 +114,8 @@ test('Codex process arguments fix model and effort and remove interactive tools'
   const args = codexArguments('schema.json', 'result.json');
   assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-sol');
   assert.equal(args[args.indexOf('--config') + 1], 'model_reasoning_effort="xhigh"');
+  const medium = codexArguments('schema.json', 'result.json', { effort: 'medium' });
+  assert.equal(medium[medium.indexOf('--config') + 1], 'model_reasoning_effort="medium"');
   assert.ok(!args.includes('web_search="live"'));
   assert.deepEqual(
     args.flatMap((value, index) => value === '--disable' ? [args[index + 1]] : []),
