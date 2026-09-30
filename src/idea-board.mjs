@@ -87,10 +87,13 @@ const importedReflections = (items = []) => items.map((item) => item.status === 
   : item);
 // Wie bei Auswertungen startet der Import allein keine Übertragung an Codex.
 const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => {
-  if (idea.analysisState === 'pending') {
-    delete idea.reanalyze;
+  // Eine unterbrochene Neu-Analyse behält die fertige Analyse, wie beim Abbrechen von Hand.
+  if (idea.analysisState === 'pending' && idea.reanalyze === 'ready') {
+    Object.assign(idea, { analysisState: 'ready', analysisWarning: 'Neu-Analyse beim Import abgebrochen. Die bisherige Analyse bleibt.' });
+  } else if (idea.analysisState === 'pending') {
     Object.assign(idea, { analysisState: 'failed', analysisWarning: 'Unfertige Analyse importiert. Starte sie mit „Erneut versuchen“.' });
   }
+  if (idea.analysisState !== 'pending') delete idea.reanalyze;
   if (idea.research?.status === 'pending') {
     Object.assign(idea.research, { status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' });
   }

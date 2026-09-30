@@ -266,16 +266,22 @@ test('thought links must be web addresses in imports and data files', async () =
 test('imported unfinished analysis waits for an explicit retry, also when merging storage', async () => {
   let calls = 0;
   const board = makeBoard({ analyze: async () => { calls += 1; return { title: 'Analysiert' }; } });
-  const pending = { id: 'offen', title: 'Offen', input: 'Offen', source: 'text', analysisState: 'pending', analysisRevision: 3, reanalyze: 'ready' };
-  await board.importState({ version: 1, ideas: [pending] }); await board.whenIdle();
+  const pending = { id: 'offen', title: 'Offen', input: 'Offen', source: 'text', analysisState: 'pending', analysisRevision: 3 };
+  // Eine abgebrochene Neu-Analyse behält die fertige Analyse, wie beim Abbrechen von Hand.
+  const refreshing = { id: 'neu', title: 'Fertig', summary: 'Bisherige Analyse', input: 'Fertig', source: 'text', analysisState: 'pending', analysisRevision: 2, reanalyze: 'ready' };
+  await board.importState({ version: 1, ideas: [pending, refreshing] }); await board.whenIdle();
   assert.equal(calls, 0);
-  const imported = board.snapshot().ideas[0];
+  const imported = board.snapshot().ideas.find((idea) => idea.id === 'offen');
   assert.equal(imported.analysisState, 'failed');
   assert.match(imported.analysisWarning, /Unfertige Analyse importiert/);
-  assert.equal(imported.reanalyze, undefined);
+  const kept = board.snapshot().ideas.find((idea) => idea.id === 'neu');
+  assert.equal(kept.analysisState, 'ready');
+  assert.equal(kept.summary, 'Bisherige Analyse');
+  assert.match(kept.analysisWarning, /Neu-Analyse.*bisherige Analyse bleibt/);
+  assert.equal(kept.reanalyze, undefined);
   await board.execute({ type: 'retry', id: 'offen' }); await board.whenIdle();
   assert.equal(calls, 1);
-  assert.equal(board.snapshot().ideas[0].title, 'Analysiert');
+  assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'offen').title, 'Analysiert');
 
   const target = join(mkdtempSync(join(tmpdir(), 'gedankenraum-pending-analysis-')), 'ideas.json');
   writeFileSync(target, JSON.stringify({ version: 1, ideas: [{ ...pending, id: 'extern' }] }));
