@@ -22,11 +22,19 @@ export function topicMatcher(chip, typed) {
 }
 
 // Gefalteter Text plus Abbildung jeder gefalteten Position auf den Originalindex.
+// ASCII wird direkt kleingeschrieben; nur andere Zeichen gehen durch fold().
 export function foldMap(text) {
   const raw = String(text ?? '');
   const idx = [];
   let folded = '';
   for (let i = 0; i < raw.length;) {
+    const code = raw.charCodeAt(i);
+    if (code < 0x80) {
+      folded += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : raw[i];
+      idx.push(i);
+      i += 1;
+      continue;
+    }
     const length = raw.codePointAt(i) > 0xffff ? 2 : 1;
     const part = fold(raw.slice(i, i + length));
     for (let k = 0; k < part.length; k += 1) idx.push(i);

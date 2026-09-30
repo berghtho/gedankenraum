@@ -57,7 +57,7 @@ const bodyInfoOf = (idea) => {
   return info;
 };
 const excerptOf = (idea) => windowAround(bodyInfoOf(idea).text || idea.summary || '', null, { length: 200 }).text;
-const anyHit = (text, terms) => terms.some((variants) => variants.some((variant) => fold(text).includes(variant)));
+const anyHit = (text, terms) => { const folded = fold(text); return terms.some((variants) => variants.some((variant) => folded.includes(variant))); };
 const focusKeyOf = (node) => [node.tagName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') || attr.name === 'name').map((attr) => `${attr.name}=${attr.value}`), node.textContent.trim().slice(0, 40)].join('|');
 
 // Bei einer Suche zeigt die Karte die Stelle, an der es passt, statt immer den Anfang.
@@ -303,6 +303,8 @@ export function initGedankenraum({ root, getToken }) {
   let resumePanel = false;
   let renderedId = null;
   let messageTimer = null;
+  let searchTimer = null;
+  let railKey = [];
   let lastCardClick = null;
   let view = ['list', 'time', 'tree'].includes(localStorage.getItem(VIEW_KEY)) ? localStorage.getItem(VIEW_KEY) : 'list';
   // Eingeklappte Gruppen der Sammlung bleiben im Browser gespeichert; ein unlesbarer Wert lässt alles aufgeklappt.
@@ -412,6 +414,7 @@ export function initGedankenraum({ root, getToken }) {
       .map(({ idea }) => idea);
   };
   const render = () => {
+    clearTimeout(searchTimer); searchTimer = null;
     const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
     const viewport = q('[data-mm-viewport]');
     const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
@@ -435,8 +438,13 @@ export function initGedankenraum({ root, getToken }) {
     q('[data-library-toggle]').setAttribute('aria-expanded', String(libraryOpen));
     q('[data-view-select]').value = view;
     detail.hidden = !detailOpen || !idea;
-    rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
-      + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
+    // Die Leiste hängt nur an Sammlung, Räumen, Filter und eingeklappten Gruppen; Tippen in der Suche lässt sie stehen.
+    const railInputs = [ideas, rooms, spaces.roomId(), filter.tag, filter.topic, filter.question, [...collapsedRail].join()];
+    if (railInputs.some((value, index) => value !== railKey[index])) {
+      railKey = railInputs;
+      rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
+        + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
+    }
     q('[data-undo]').disabled = !canUndo;
     const refreshing = ideas.filter((item) => item.reanalyze && item.analysisState === 'pending').length;
     q('[data-reanalyze]').textContent = refreshing ? `NEU-ANALYSE ABBRECHEN · ${refreshing} OFFEN` : 'ALLE NEU ANALYSIEREN';
@@ -731,8 +739,10 @@ export function initGedankenraum({ root, getToken }) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') capture();
   });
   captureButton.addEventListener('click', capture);
-  searchInput.addEventListener('input', render);
+  // Tippen zeichnet erst nach einer kurzen Pause; Tasten, die auf die Treffer wirken, holen das vorher nach.
+  searchInput.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(render, 120); });
   searchInput.addEventListener('keydown', (event) => {
+    if (searchTimer && ['Enter', 'ArrowDown', 'Escape'].includes(event.key)) render();
     if (event.key === 'Enter') {
       const first = map.querySelector('[data-idea-id]');
       if (first) { event.preventDefault(); select(first.dataset.ideaId, { focusPanel: true }); }

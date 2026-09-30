@@ -47,6 +47,30 @@ test('hits map back to original positions, including ß and surrogate pairs', ()
   assert.deepEqual(hitsIn(text, termsOf('stras')).map(({ start, end }) => text.slice(start, end)), ['Straß', 'straß']);
 });
 
+// Der frühere Weg: jedes Zeichen einzeln durch fold().
+const slowFoldMap = (raw) => {
+  const idx = [];
+  let folded = '';
+  for (let i = 0; i < raw.length;) {
+    const length = raw.codePointAt(i) > 0xffff ? 2 : 1;
+    const part = fold(raw.slice(i, i + length));
+    for (let k = 0; k < part.length; k += 1) idx.push(i);
+    folded += part;
+    i += length;
+  }
+  idx.push(raw.length);
+  return { folded, idx };
+};
+
+test('fast ASCII folding maps exactly like folding every character', () => {
+  for (const text of ['', 'ABC xyz 123 !?-_[]{}~', 'Größe MASSE Straße', 'Café e\u0301 İstanbul ÆØÅ', '🙂 Hütte 🙂ß\tTab\nZeile', 'ŒUVRE façade ÀÉÎÕÜ Ÿ ǅ']) {
+    assert.deepEqual(foldMap(text), slowFoldMap(text), text);
+  }
+  const mixed = 'Die HÜTTE am Straßenrand: 3 Tage, 2 Nächte.';
+  assert.equal(foldMap(mixed).folded, fold(mixed));
+  assert.deepEqual(hitsIn(mixed, termsOf('huette strasse NACHTE')).map(({ start, end }) => mixed.slice(start, end)), ['HÜTTE', 'Straße', 'Nächte']);
+});
+
 test('overlapping hits merge and marking escapes HTML around them', () => {
   const text = 'Tag <b>Wandern</b> & wandern';
   assert.equal(markText(text, termsOf('wandern wand'), escape), 'Tag &lt;b&gt;<mark class="ib-hit">Wandern</mark>&lt;/b&gt; &amp; <mark class="ib-hit">wandern</mark>');
