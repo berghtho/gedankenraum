@@ -155,8 +155,9 @@ export class IdeaBoard {
   execute(command) {
     return this.#enqueue(async () => {
       const before = this.#peek();
-      const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#peek(), command.type);
+      const handler = this.#handler(command);
+      const result = await handler.run(command);
+      if (handler.undoable) this.#remember(before, this.#peek(), command.type);
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -177,45 +178,59 @@ export class IdeaBoard {
     return this.#enqueue(() => this.#importState(imported)).then((result) => { this.resumeAnalysis(); return result; });
   }
 
-  async #execute(command) {
+  // Eigene Änderungen landen im Undo-Verlauf; KI-Aufträge, Wiederholungen und Undo selbst nicht.
+  #commands = {
+    capture: { run: (command) => this.#capture(command), undoable: true },
+    roomCreate: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomRename: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomMembers: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomArchive: { run: (command) => this.#roomCommand(command), undoable: true },
+    roomRestore: { run: (command) => this.#roomCommand(command), undoable: true },
+    reflect: { run: (command) => this.#startReflection(command), undoable: false },
+    retryReflection: { run: (command) => this.#retryReflection(command), undoable: false },
+    acceptReflection: { run: (command) => this.#acceptReflection(command), undoable: true },
+    research: { run: (command) => this.#startResearch(command), undoable: false },
+    acceptResearch: { run: (command) => this.#acceptResearch(command), undoable: true },
+    answer: { run: (command) => this.#answer(command), undoable: true },
+    mergeTags: { run: (command) => this.#mergeTags(command), undoable: true },
+    reanalyzeAll: { run: () => this.#reanalyzeAll(), undoable: false },
+    cancelReanalysis: { run: () => this.#cancelReanalysis(), undoable: false },
+    retry: { run: (command) => this.#retry(command), undoable: false },
+    retopic: { run: (command) => this.#retopic(command), undoable: true },
+    retag: { run: (command) => this.#retag(command), undoable: true },
+    renametag: { run: (command) => this.#renameTag(command), undoable: true },
+    delete: { run: (command) => this.#delete(command), undoable: true },
+    restore: { run: (command) => this.#restore(command), undoable: true },
+    edit: { run: (command) => this.#edit(command), undoable: true },
+    undo: { run: () => this.#undo(), undoable: false },
+    move: { run: (command) => this.#move(command), undoable: true },
+    connect: { run: (command) => this.#connect(command), undoable: true },
+    disconnect: { run: (command) => this.#connect(command), undoable: true },
+  };
+
+  #handler(command) {
     if (!command || typeof command !== 'object' || Array.isArray(command)) {
       throw new IdeaBoardValidationError('command must be an object');
     }
-    if (command.type === 'capture') return this.#capture(command);
-    if (['roomCreate', 'roomRename', 'roomMembers', 'roomArchive', 'roomRestore'].includes(command.type)) return this.#roomCommand(command);
-    if (command.type === 'reflect') return this.#startReflection(command);
-    if (command.type === 'acceptReflection') return this.#acceptReflection(command);
-    if (command.type === 'research') return this.#startResearch(command);
-    if (command.type === 'acceptResearch') return this.#acceptResearch(command);
-    if (command.type === 'answer') return this.#answer(command);
-    if (command.type === 'mergeTags') return this.#mergeTags(command);
-    if (command.type === 'reanalyzeAll') return this.#reanalyzeAll();
-    if (command.type === 'cancelReanalysis') return this.#cancelReanalysis();
-    if (command.type === 'retryReflection') {
-      const state = this.#read();
-      const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
-      if (!reflection || reflection.status !== 'failed') throw new IdeaBoardValidationError('Keine fehlgeschlagene Auswertung gefunden.');
-      reflection.status = 'pending'; reflection.error = null;
-      this.#write(state);
-      return { reflection: structuredClone(reflection) };
-    }
-    if (command.type === 'retopic') return this.#retopic(command);
-    if (command.type === 'retag') return this.#retag(command);
-    if (command.type === 'renametag') return this.#renameTag(command);
-    if (command.type === 'delete') return this.#delete(command);
-    if (command.type === 'restore') return this.#restore(command);
-    if (command.type === 'edit') return this.#edit(command);
-    if (command.type === 'undo') return this.#undo();
-    if (command.type === 'move') return this.#move(command);
-    if (command.type === 'connect' || command.type === 'disconnect') return this.#connect(command);
-    if (command.type === 'retry') {
-      const state = this.#read();
-      const idea = this.#active(state, command.id);
-      this.#queueIdea(idea);
-      this.#write(state);
-      return { idea: structuredClone(idea) };
-    }
-    throw new IdeaBoardValidationError(`unsupported command: ${clean(command.type, '(empty)')}`);
+    if (!Object.hasOwn(this.#commands, command.type)) throw new IdeaBoardValidationError(`unsupported command: ${clean(command.type, '(empty)')}`);
+    return this.#commands[command.type];
+  }
+
+  #retry(command) {
+    const state = this.#read();
+    const idea = this.#active(state, command.id);
+    this.#queueIdea(idea);
+    this.#write(state);
+    return { idea: structuredClone(idea) };
+  }
+
+  #retryReflection(command) {
+    const state = this.#read();
+    const reflection = (state.reflections ?? []).find((item) => item.id === command.id);
+    if (!reflection || reflection.status !== 'failed') throw new IdeaBoardValidationError('Keine fehlgeschlagene Auswertung gefunden.');
+    reflection.status = 'pending'; reflection.error = null;
+    this.#write(state);
+    return { reflection: structuredClone(reflection) };
   }
 
   async #capture(command) {

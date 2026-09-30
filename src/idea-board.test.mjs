@@ -142,6 +142,8 @@ test('invalid and oversized commands are rejected', async () => {
   const board = makeBoard();
   await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), IdeaBoardValidationError);
   await assert.rejects(() => board.execute({ type: 'launch' }), /unsupported command/);
+  for (const type of ['constructor', 'toString', '__proto__', 5]) await assert.rejects(() => board.execute({ type }), /unsupported command/);
+  for (const command of [null, [], 'capture']) await assert.rejects(() => board.execute(command), /command must be an object/);
 });
 
 test('concurrent captures serialize instead of losing a thought', async () => {
