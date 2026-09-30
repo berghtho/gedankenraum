@@ -1,7 +1,24 @@
 import { isDerived } from './thought-kinds.mjs';
 
 export const relationLabels = { builds: 'baut auf', contradicts: 'widerspricht', example: 'Beispiel für' };
+export const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
+// Die Farbe hängt nur am Namen des Themas (FNV-1a), damit ein neues Thema keine anderen umfärbt.
+export function topicColor(topic) {
+  let hash = 0x811c9dc5;
+  for (const char of String(topic ?? '')) hash = Math.imul(hash ^ char.codePointAt(0), 0x01000193);
+  return TOPIC_COLORS[(hash >>> 0) % TOPIC_COLORS.length];
+}
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+
+// Verbindungen eines Gedankens: sein Elternknoten und jede benannte Beziehung zu einem vorhandenen Gedanken.
+export function connectionCount(idea, ideas) {
+  const ids = new Set(ideas.map((item) => item.id));
+  let count = ids.has(idea.parentId) ? 1 : 0;
+  for (const from of ideas) for (const edge of from.relations ?? []) {
+    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ids.has(edge.targetId)) count += 1;
+  }
+  return count;
+}
 
 // Übernommene Vorschläge und Recherche-Befunde hängen in der Mindmap an dem ersten sichtbaren Gedanken,
 // auf dem sie aufbauen. Ein selbst gesetzter Elternknoten geht vor; gespeichert wird dabei nichts.

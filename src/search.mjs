@@ -12,12 +12,29 @@ export const termsOf = (query) => [...new Set(fold(query).split(/\s+/).filter(Bo
 
 export const matches = (folded, terms) => terms.every((variants) => variants.some((variant) => folded.includes(variant)));
 
+// Themenfilter auf das gefaltete Thema: ein Klick (Leiste, Chip) wählt genau dieses Thema,
+// getipptes „thema:X“ findet jedes Thema, das so beginnt. Ohne Filter null.
+export function topicMatcher(chip, typed) {
+  if (chip) { const wanted = fold(chip); return (topic) => topic === wanted; }
+  if (!typed) return null;
+  const variants = variantsOf(fold(typed));
+  return (topic) => variants.some((variant) => topic.startsWith(variant));
+}
+
 // Gefalteter Text plus Abbildung jeder gefalteten Position auf den Originalindex.
+// ASCII wird direkt kleingeschrieben; nur andere Zeichen gehen durch fold().
 export function foldMap(text) {
   const raw = String(text ?? '');
   const idx = [];
   let folded = '';
   for (let i = 0; i < raw.length;) {
+    const code = raw.charCodeAt(i);
+    if (code < 0x80) {
+      folded += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : raw[i];
+      idx.push(i);
+      i += 1;
+      continue;
+    }
     const length = raw.codePointAt(i) > 0xffff ? 2 : 1;
     const part = fold(raw.slice(i, i + length));
     for (let k = 0; k < part.length; k += 1) idx.push(i);
@@ -116,6 +133,11 @@ export const startsWithTitle = (text, title) => {
 
 export const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return String(url ?? ''); }
+};
+
+// Als Link erscheint nur http(s); alles andere bleibt Text.
+export const isWebUrl = (url) => {
+  try { return ['http:', 'https:'].includes(new URL(String(url ?? '').trim()).protocol); } catch { return false; }
 };
 
 export const pathOf = (url) => {

@@ -1,10 +1,9 @@
-const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
-import { layoutMindmap, mindmapMarkup, relationLabels } from './mindmap.mjs';
+import { connectionCount, layoutMindmap, mindmapMarkup, topicColor } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
-import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
@@ -17,12 +16,15 @@ const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
 const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
+// Formatierer einmal anlegen; je Zeile neu gebaut kosten sie beim Rendern spürbar.
+const DAY_MONTH = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short' });
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
 const relativeDate = (value) => {
   const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60_000);
   if (minutes < 1) return 'gerade eben';
   if (minutes < 60) return `vor ${minutes} Min.`;
   if (minutes < 1_440) return `vor ${Math.floor(minutes / 60)} Std.`;
-  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short' }).format(new Date(value));
+  return DAY_MONTH.format(new Date(value));
 };
 const dayLabel = (value) => {
   const date = new Date(value);
@@ -30,10 +32,7 @@ const dayLabel = (value) => {
   const days = Math.floor((today - new Date(date).setHours(0, 0, 0, 0)) / 86_400_000);
   if (days <= 0) return 'HEUTE';
   if (days === 1) return 'GESTERN';
-  const format = today.getFullYear() === date.getFullYear()
-    ? { day: '2-digit', month: 'short' }
-    : { day: '2-digit', month: 'short', year: 'numeric' };
-  return new Intl.DateTimeFormat('de-DE', format).format(date).toUpperCase();
+  return (today.getFullYear() === date.getFullYear() ? DAY_MONTH : DAY_MONTH_YEAR).format(date).toUpperCase();
 };
 
 const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
@@ -58,7 +57,7 @@ const bodyInfoOf = (idea) => {
   return info;
 };
 const excerptOf = (idea) => windowAround(bodyInfoOf(idea).text || idea.summary || '', null, { length: 200 }).text;
-const anyHit = (text, terms) => terms.some((variants) => variants.some((variant) => fold(text).includes(variant)));
+const anyHit = (text, terms) => { const folded = fold(text); return terms.some((variants) => variants.some((variant) => folded.includes(variant))); };
 const focusKeyOf = (node) => [node.tagName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') || attr.name === 'name').map((attr) => `${attr.name}=${attr.value}`), node.textContent.trim().slice(0, 40)].join('|');
 
 // Bei einer Suche zeigt die Karte die Stelle, an der es passt, statt immer den Anfang.
@@ -108,15 +107,16 @@ function emptyMarkup(hasFilter, hasIdeas, room, query) {
     <p><button class="ib-small-btn" type="button" data-idea-filter-clear="all">FILTER AUFHEBEN</button></p></div></div>`;
 }
 
-const outsideRoom = (idea, room) => !!room && !room.ideaIds.includes(idea.id);
-function listMarkup(ideas, selectedId, terms, room) {
+// roomIds: Gedanken des aktiven Raums als Set, ohne Raum null.
+const outsideRoom = (idea, roomIds) => !!roomIds && !roomIds.has(idea.id);
+function listMarkup(ideas, selectedId, terms, roomIds) {
   return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, {
     terms,
-    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, isDerived(idea) ? 'KI-Vorschlag' : null, questionLabel(idea), idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
+    meta: [outsideRoom(idea, roomIds) ? 'nicht im Raum' : null, isDerived(idea) ? 'KI-Vorschlag' : null, questionLabel(idea), idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
   })).join('')}</div>`;
 }
 
-function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
+function timelineMarkup(ideas, selectedId, colorFor, terms, roomIds) {
   const sorted = [...ideas].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const days = new Map();
   for (const idea of sorted) {
@@ -128,7 +128,7 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
       color: colorFor(idea.topic), terms, tags: true,
-      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
+      meta: [outsideRoom(idea, roomIds) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
     })).join('')}</div>
   </div>`).join('');
 }
@@ -196,17 +196,9 @@ function relatedMarkup(idea, ideas, colorFor) {
   }).join('')}</div></div>`;
 }
 
-function connectionCount(idea, ideas) {
-  let count = ideas.some((item) => item.id === idea.parentId) ? 1 : 0;
-  for (const from of ideas) for (const edge of from.relations ?? []) {
-    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ideas.some((item) => item.id === edge.targetId)) count += 1;
-  }
-  return count;
-}
-
 const researchButton = (label = 'RECHERCHIEREN') => `<button class="ib-small-btn" type="button" data-research title="Sendet den Gedanken an Codex und recherchiert im Web">${label}</button>`;
 // Quellen sind beim Speichern geprüft; als Link erscheint trotzdem nur http(s).
-const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => /^https?:\/\//i.test(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
+const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => isWebUrl(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
 const answerButton = (answered, label) => `<button class="ib-small-btn" type="button" data-question-answered="${answered}">${label}</button>`;
 
 // Eine Frage ist offen, bis sie als beantwortet markiert wird – von Hand oder nach einer Recherche.
@@ -225,7 +217,8 @@ function researchMarkup(idea, ideas) {
   const pending = research.status === 'pending';
   const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
   const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
-  const adopted = (index) => ideas.some((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId && other.researchOrigin.index === index);
+  const taken = new Set(ideas.filter((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId).map((other) => other.researchOrigin.index));
+  const adopted = (index) => taken.has(index);
   const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}" data-research-result="${html(resultId)}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
   const closes = research.status === 'ready' && isQuestion(idea) && !idea.answeredAt;
   return `<section class="ib-research">
@@ -260,7 +253,9 @@ function detailMarkup(idea, ideas, colorFor, terms) {
   const body = paragraphs.length
     ? paragraphs.map((part) => `<p>${mark(part)}</p>`).join('')
     : `<p class="ib-text-pending">${link && idea.analysisState === 'pending' ? 'Zusammenfassung folgt nach der Analyse.' : link ? 'Keine Zusammenfassung vorhanden.' : ''}</p>`;
-  const url = link && idea.url ? `<a class="ib-detail-url" href="${html(idea.url)}" target="_blank" rel="noreferrer"><b>${html(hostOf(idea.url))}</b><span>${html(pathOf(idea.url))}</span> ↗</a>` : '';
+  const url = !link || !idea.url ? ''
+    : isWebUrl(idea.url) ? `<a class="ib-detail-url" href="${html(idea.url)}" target="_blank" rel="noreferrer"><b>${html(hostOf(idea.url))}</b><span>${html(pathOf(idea.url))}</span> ↗</a>`
+      : `<p class="ib-detail-url">${html(idea.url)}</p>`;
   const copy = !link && (idea.input ?? '').trim() ? '<button class="ib-copy-btn" type="button" data-idea-copy>KOPIEREN</button>' : '';
   const connections = connectionCount(idea, ideas);
   return `${idea.analysisState === 'pending' ? '<p class="ib-analysis-note" role="status">Gespeichert. Analyse läuft im Hintergrund.</p>' : ''}
@@ -298,6 +293,8 @@ export function initGedankenraum({ root, getToken }) {
   let mutationCount = 0;
   let epoch = 0;
   let pollTimer = null;
+  let polling = true;
+  let revision = null;
   let selectedId = null;
   let busy = false;
   let keep = false;
@@ -306,6 +303,8 @@ export function initGedankenraum({ root, getToken }) {
   let resumePanel = false;
   let renderedId = null;
   let messageTimer = null;
+  let searchTimer = null;
+  let railKey = [];
   let lastCardClick = null;
   let view = ['list', 'time', 'tree'].includes(localStorage.getItem(VIEW_KEY)) ? localStorage.getItem(VIEW_KEY) : 'list';
   // Eingeklappte Gruppen der Sammlung bleiben im Browser gespeichert; ein unlesbarer Wert lässt alles aufgeklappt.
@@ -361,10 +360,7 @@ export function initGedankenraum({ root, getToken }) {
     message.hidden = !text;
     if (text && !error) messageTimer = setTimeout(() => { message.hidden = true; }, 3500);
   };
-  const colorFor = (() => {
-    const order = () => [...new Set(ideas.map((idea) => idea.topic))];
-    return (topic) => TOPIC_COLORS[Math.max(0, order().indexOf(topic)) % TOPIC_COLORS.length];
-  })();
+  const colorFor = topicColor;
   const parseQuery = (raw) => {
     // "#tag" und "thema:Name" in der Suche wirken wie die Leiste links.
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
@@ -399,25 +395,26 @@ export function initGedankenraum({ root, getToken }) {
     const terms = termsOf(parsed.text);
     const chipTag = fold(filter.tag ?? '');
     const typedTags = parsed.tag ? variantsOf(fold(parsed.tag)) : [];
-    const topics = (filter.topic ?? parsed.topic) ? variantsOf(fold(filter.topic ?? parsed.topic)) : [];
+    const topicOk = topicMatcher(filter.topic, parsed.topic);
     const searching = !!(terms.length || typedTags.length || parsed.topic || (filter.global && (filter.tag || filter.topic)));
     const pool = searching ? ideas : spaces.contextIdeas(ideas);
-    const room = spaces.currentRoom();
+    const roomIds = new Set(spaces.currentRoom()?.ideaIds ?? []);
     const results = pool.filter((idea) => {
       const folded = foldedOf(idea);
       return (!chipTag || folded.tagList.includes(chipTag))
         && (!typedTags.length || typedTags.some((variant) => folded.tagList.some((tag) => tag.startsWith(variant))))
-        && (!topics.length || topics.some((variant) => folded.topic.includes(variant)))
+        && (!topicOk || topicOk(folded.topic))
         && (!filter.question || (isQuestion(idea) && (filter.question === 'answered') === !!idea.answeredAt))
         && matches(folded.hay, terms);
     });
     if (!terms.length) return results;
     return results
-      .map((idea, index) => ({ idea, index, score: scoreOf(foldedOf(idea), terms) + (room?.ideaIds.includes(idea.id) ? 100 : 0) }))
+      .map((idea, index) => ({ idea, index, score: scoreOf(foldedOf(idea), terms) + (roomIds.has(idea.id) ? 100 : 0) }))
       .sort((left, right) => right.score - left.score || left.index - right.index)
       .map(({ idea }) => idea);
   };
   const render = () => {
+    clearTimeout(searchTimer); searchTimer = null;
     const focusedId = map.contains(document.activeElement) ? document.activeElement.dataset.ideaId : null;
     const viewport = q('[data-mm-viewport]');
     const scroll = viewport ? { left: viewport.scrollLeft, top: viewport.scrollTop } : null;
@@ -432,6 +429,7 @@ export function initGedankenraum({ root, getToken }) {
     const visible = visibleIdeas();
     const idea = selected();
     const room = spaces.currentRoom();
+    const roomIds = room ? new Set(room.ideaIds) : null;
     count.textContent = `${visible.length} VON ${ideas.length}`;
     grid.classList.toggle('is-tree', view === 'tree');
     grid.classList.toggle('has-library', libraryOpen);
@@ -440,19 +438,24 @@ export function initGedankenraum({ root, getToken }) {
     q('[data-library-toggle]').setAttribute('aria-expanded', String(libraryOpen));
     q('[data-view-select]').value = view;
     detail.hidden = !detailOpen || !idea;
-    rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
-      + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
+    // Die Leiste hängt nur an Sammlung, Räumen, Filter und eingeklappten Gruppen; Tippen in der Suche lässt sie stehen.
+    const railInputs = [ideas, rooms, spaces.roomId(), filter.tag, filter.topic, filter.question, [...collapsedRail].join()];
+    if (railInputs.some((value, index) => value !== railKey[index])) {
+      railKey = railInputs;
+      rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
+        + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
+    }
     q('[data-undo]').disabled = !canUndo;
     const refreshing = ideas.filter((item) => item.reanalyze && item.analysisState === 'pending').length;
     q('[data-reanalyze]').textContent = refreshing ? `NEU-ANALYSE ABBRECHEN · ${refreshing} OFFEN` : 'ALLE NEU ANALYSIEREN';
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
     const hasFilter = !!(filter.tag || filter.topic || filter.question || filter.query);
-    const outside = room ? visible.filter((candidate) => outsideRoom(candidate, room)).length : 0;
+    const outside = roomIds ? visible.filter((candidate) => outsideRoom(candidate, roomIds)).length : 0;
     let body;
     if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
     else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, room, filter.query);
-    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, room);
-    else body = listMarkup(visible, selectedId, terms, room);
+    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, roomIds);
+    else body = listMarkup(visible, selectedId, terms, roomIds);
     map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, outside) : '') + body;
     detail.innerHTML = panelHeadMarkup(idea) + detailMarkup(idea, ideas, colorFor, terms);
     const announce = hasFilter ? (visible.length ? `${visible.length} Treffer` : 'Nichts gefunden') : '';
@@ -477,8 +480,12 @@ export function initGedankenraum({ root, getToken }) {
     const pending = !!git?.available && (git.changed || git.ahead > 0);
     gitPush.hidden = !pending;
     if (!pending) return;
-    gitPush.textContent = git.changed ? 'PUSH · ideas.json geändert' : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen`;
-    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`;
+    // Push nimmt alle lokalen Commits des Branches mit, auch solche, die nicht von Gedankenraum stammen.
+    const foreign = git.foreign > 0 ? git.foreign : 0;
+    const others = `${foreign} fremde${foreign === 1 ? 'r' : ''} Commit${foreign === 1 ? '' : 's'}`;
+    gitPush.textContent = git.changed ? `PUSH · ideas.json geändert${foreign ? ` (+ ${others})` : ''}` : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen${foreign ? ` (${foreign} fremde)` : ''}`;
+    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`
+      + (foreign ? `. Dabei ${foreign === 1 ? 'wird' : 'werden'} auch ${others} gepusht, ${foreign === 1 ? 'der' : 'die'} nicht von Gedankenraum ${foreign === 1 ? 'stammt' : 'stammen'}.` : '');
   };
   const loadGit = async () => {
     clearTimeout(gitTimer);
@@ -498,6 +505,7 @@ export function initGedankenraum({ root, getToken }) {
   const applySnapshot = (snapshot) => {
     if (!Array.isArray(snapshot.ideas)) return;
     clearTimeout(gitTimer); gitTimer = setTimeout(loadGit, 1000);
+    revision = snapshot.revision ?? null;
     ideas = snapshot.ideas;
     trash = snapshot.trash ?? [];
     canUndo = snapshot.canUndo ?? false;
@@ -508,11 +516,15 @@ export function initGedankenraum({ root, getToken }) {
   const post = async (path, command = {}) => {
     mutationCount += 1; epoch += 1;
     try {
-    const response = await fetch(path, {
+    const send = async (renew) => fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gedankenraum-token': await getToken() },
+      headers: { 'content-type': 'application/json', 'x-gedankenraum-token': await getToken(renew) },
       body: JSON.stringify(command),
     });
+    // Nach einem Neustart des Servers gilt das alte Token nicht mehr; abgewiesen wird vor jeder Änderung,
+    // also einmal mit frischem Token wiederholen.
+    let response = await send(false);
+    if (response.status === 403) response = await send(true);
     const payload = await response.json();
     if (!response.ok) throw Object.assign(new Error(payload.error ?? 'Aktion fehlgeschlagen.'), payload);
     applySnapshot(payload);
@@ -577,7 +589,11 @@ export function initGedankenraum({ root, getToken }) {
   };
   const spaces = initWorkspaces({
     root, snapshot: () => ({ ideas, trash, canUndo, rooms, reflections }), command: runCommand, render, reveal, selected,
-    visibleIds: () => visibleIdeas().filter((idea) => !spaces.roomId() || spaces.currentRoom().ideaIds.includes(idea.id)).map((idea) => idea.id),
+    visibleIds: () => {
+      const room = spaces.currentRoom();
+      const roomIds = room && new Set(room.ideaIds);
+      return visibleIdeas().filter((idea) => !roomIds || roomIds.has(idea.id)).map((idea) => idea.id);
+    },
     canNavigate: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
     openPanel: () => { detailOpen = false; render(); },
   });
@@ -593,12 +609,10 @@ export function initGedankenraum({ root, getToken }) {
     detailOpen = false; spaces.closeResults(); inline.openEdit(idea);
   };
   const thinking = initThinkingTools({
-    parentOf,
     root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
     render, notify: showMessage, reveal, openInline: editInline,
     newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
   });
-  const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   initTagCleanup({ root, snapshot: () => ({ ideas }), request: post, render, notify: showMessage });
   // Nach einem Modellwechsel alles noch einmal analysieren; läuft im Hintergrund und lässt sich abbrechen.
   const reanalyze = async () => {
@@ -615,9 +629,9 @@ export function initGedankenraum({ root, getToken }) {
       showMessage(`${result.queued} Gedanken werden neu analysiert. Abbrechen über ⋯.`);
     } catch (error) { showMessage(error.message, true); }
   };
+  // post() übernimmt den Snapshot der Antwort; danach nur noch zeichnen.
   const setTags = async (idea, tags) => {
-    const result = await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
-    replaceIdea(result.idea);
+    await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
     render();
   };
   const setView = (next) => { view = next; localStorage.setItem(VIEW_KEY, next); render(); };
@@ -723,8 +737,10 @@ export function initGedankenraum({ root, getToken }) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') capture();
   });
   captureButton.addEventListener('click', capture);
-  searchInput.addEventListener('input', render);
+  // Tippen zeichnet erst nach einer kurzen Pause; Tasten, die auf die Treffer wirken, holen das vorher nach.
+  searchInput.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(render, 120); });
   searchInput.addEventListener('keydown', (event) => {
+    if (searchTimer && ['Enter', 'ArrowDown', 'Escape'].includes(event.key)) render();
     if (event.key === 'Enter') {
       const first = map.querySelector('[data-idea-id]');
       if (first) { event.preventDefault(); select(first.dataset.ideaId, { focusPanel: true }); }
@@ -791,7 +807,6 @@ export function initGedankenraum({ root, getToken }) {
         throw new Error('Die gewählte Datei enthält kein gültiges JSON.');
       }
       const result = await post('/api/ideas/import', imported);
-      ideas = result.ideas;
       selectedId = null; detailOpen = false;
       const duplicates = result.skipped ? ` ${result.skipped} Duplikat${result.skipped === 1 ? '' : 'e'} übersprungen.` : '';
       showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}${result.importedRooms ? ` ${result.importedRooms} Arbeitsräume übernommen.` : ''}${result.importedReflections ? ` ${result.importedReflections} Auswertungen übernommen.` : ''}`);
@@ -841,7 +856,6 @@ export function initGedankenraum({ root, getToken }) {
     tagSave.disabled = true;
     try {
       const result = await post('/api/ideas/execute', { type: 'renametag', from: editingTag, to: target });
-      ideas = result.ideas;
       filter.tag = result.tag;
       tagDialog.close();
       showMessage(result.merged ? `#${editingTag} wurde in #${result.tag} zusammengelegt.` : `#${editingTag} heißt jetzt #${result.tag}.`);
@@ -920,8 +934,7 @@ export function initGedankenraum({ root, getToken }) {
       } else if (target.closest?.('[data-idea-topic]')) {
         const topic = window.prompt('Neues Thema', idea.topic)?.trim();
         if (!topic || topic === idea.topic) return;
-        const result = await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
-        replaceIdea(result.idea);
+        await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
         render();
       } else if (target.closest?.('[data-research]')) {
         await runCommand({ type: 'research', id: idea.id });
@@ -936,7 +949,6 @@ export function initGedankenraum({ root, getToken }) {
         showMessage(answered ? 'Frage als beantwortet markiert.' : 'Frage ist wieder offen.');
       } else if (target.closest?.('[data-idea-delete]')) {
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
-        ideas = ideas.filter((item) => item.id !== idea.id);
         selectedId = null; detailOpen = false;
         showMessage('Im Papierkorb. Rückgängig mit Strg+Z oder über ⋯.');
         render();
@@ -969,6 +981,7 @@ export function initGedankenraum({ root, getToken }) {
     if (!window.confirm('Gedankenraum beenden?')) return;
     try {
       await post('/api/shutdown');
+      polling = false; clearTimeout(pollTimer); clearTimeout(gitTimer);
       document.body.innerHTML = '<div class="stopped"><b>Gedankenraum wurde beendet.</b><span>Dieser Tab kann geschlossen werden.</span></div>';
       window.close();
     } catch (error) {
@@ -1011,7 +1024,6 @@ export function initGedankenraum({ root, getToken }) {
     try {
       const result = await post('/api/storage', { directory: storageDirectory.value.trim(), ...(mode && { mode }) });
       spaces.reset();
-      ideas = result.ideas;
       selectedId = null; detailOpen = false;
       storageOpen.title = result.filePath;
       storageDialog.close();
@@ -1051,20 +1063,24 @@ export function initGedankenraum({ root, getToken }) {
     }
   });
 
+  // Gefragt wird nur, ob sich seit dem angezeigten Stand etwas geändert hat; 204 heißt unverändert.
   const refresh = async () => {
+    if (!polling) return;
     const started = epoch;
     try {
       if (!mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing() && !document.hidden) {
-        const response = await fetch('/api/ideas');
-        const next = await response.json();
-        if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
-        if (started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing()
-          && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo, rooms, reflections })) {
-          applySnapshot(next); render();
+        const response = await fetch(revision ? `/api/ideas?since=${encodeURIComponent(revision)}` : '/api/ideas');
+        if (response.status !== 204) {
+          const next = await response.json();
+          if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
+          if (polling && started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing()
+            && next.revision !== revision) {
+            applySnapshot(next); render();
+          }
         }
       }
     } catch { /* Keep locally displayed data and unsaved dialog input while offline. */ }
-    pollTimer = setTimeout(refresh, 1200);
+    if (polling) pollTimer = setTimeout(refresh, 1200);
   };
   window.addEventListener('pagehide', () => clearTimeout(pollTimer));
   return {
@@ -1091,8 +1107,8 @@ const root = document.getElementById('gedankenraum');
 let token = null;
 const app = initGedankenraum({
   root,
-  getToken: async () => {
-    if (token) return token;
+  getToken: async (renew = false) => {
+    if (token && !renew) return token;
     const response = await fetch('/api/session');
     const payload = await response.json();
     if (!response.ok || !payload.token) throw new Error(payload.error ?? 'Sitzung konnte nicht geöffnet werden.');
