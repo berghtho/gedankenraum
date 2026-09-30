@@ -1,22 +1,23 @@
 import { relationLabels } from './mindmap.mjs';
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+import { html } from './util.mjs';
 
 export function connectionsMarkup(idea, ideas) {
+  const byId = new Map(ideas.map((item) => [item.id, item]));
   const rows = [];
   for (const from of ideas) for (const edge of from.relations ?? []) {
     if (!relationLabels[edge.type] || (from.id !== idea.id && edge.targetId !== idea.id)) continue;
-    const target = ideas.find((item) => item.id === edge.targetId);
+    const target = byId.get(edge.targetId);
     if (!target) continue;
     const outgoing = from.id === idea.id;
     const other = outgoing ? target : from;
     const direction = outgoing ? `Dieser Gedanke ${relationLabels[edge.type]} →` : ({ builds: '← baut auf diesem Gedanken auf', contradicts: '← widerspricht diesem Gedanken', example: '← Beispiel für diesen Gedanken' })[edge.type];
     rows.push(`<div class="ib-connection"><button type="button" data-related-open="${html(other.id)}"><small>${direction}</small><span>${html(other.title)}</span></button><button type="button" data-connection-remove data-from="${html(from.id)}" data-target="${html(target.id)}" data-relation="${edge.type}" aria-label="Verbindung entfernen">×</button></div>`);
   }
-  const parent = ideas.find((item) => item.id === idea.parentId);
+  const parent = byId.get(idea.parentId);
   return `<section class="ib-related"><div class="ib-section-head"><span class="ib-detail-label">VERBINDUNGEN</span><button class="ib-small-btn" type="button" data-connect-open>+ VERBINDEN</button></div>${parent ? `<button class="ib-parent-link" type="button" data-related-open="${html(parent.id)}">Untergedanke von ${html(parent.title)}</button>` : ''}${rows.join('') || '<p class="ib-tools-note">Verknüpfe Gedanken auch über Themengrenzen hinweg.</p>'}</section>`;
 }
 
-export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify, openInline, newInline, parentOf = (idea) => idea.parentId ?? null }) {
+export function initThinkingTools({ root, snapshot, selected, command, render, reveal, notify, openInline, newInline }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'ib-dialog ib-thinking-dialog';
   dialog.setAttribute('aria-labelledby', 'thinking-title');
@@ -42,16 +43,10 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
       + '<p class="ib-dialog-note">Eigene Titel und Zusammenfassungen bleiben erhalten, auch wenn eine Analyse noch läuft.</p>', 'SPEICHERN');
     q('[name="title"]').focus();
   };
+  // Neue Gedanken entstehen inline in der Ansicht; der Zweig darüber wird dafür aufgeklappt.
   const openNew = (kind, idea = selected()) => {
-    if (newInline) { if (idea?.id) mapState.collapsed.delete(idea.id); return newInline(kind, idea); }
-    mode = 'new';
-    const parentId = kind === 'child' ? idea?.id : kind === 'sibling' && idea ? parentOf(idea) : null;
-    editing = { parentId: parentId ?? null, topic: kind === 'root' ? null : idea?.topic };
-    const parent = snapshot().ideas.find((item) => item.id === parentId);
-    shell(kind === 'child' ? 'Untergedanke' : kind === 'sibling' ? 'Nachbargedanke' : 'Neuer Gedanke',
-      (parent ? `<p>Unter ${html(parent.title)}</p>` : '') + field('input', 'DEIN GEDANKE', '', 12000, true), 'ABLEGEN');
-    q('[name="input"]').required = true;
-    q('[name="input"]').focus();
+    if (idea?.id) mapState.collapsed.delete(idea.id);
+    newInline(kind, idea);
   };
   const populateTargets = () => {
     const query = q('[name="find"]').value.toLocaleLowerCase('de-DE');
@@ -102,16 +97,10 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
     if (!button || button.disabled) return;
     button.disabled = true;
     const data = new FormData(q('form'));
-    let createdId = null;
     try {
       if (mode === 'edit') {
         const fields = Object.fromEntries([...data].filter(([key, value]) => value.trim() !== (editing[key] ?? '')));
         await command({ type: 'edit', id: editing.id, fields });
-      } else if (mode === 'new') {
-        const input = data.get('input').trim();
-        const result = await command({ type: 'capture', input, title: input.split('\n')[0].slice(0, 160), parentId: editing.parentId, ...(editing.topic && { topic: editing.topic }) });
-        if (editing.parentId) mapState.collapsed.delete(editing.parentId);
-        createdId = result.idea.id;
       } else if (mode === 'connect') {
         await command({ type: 'connect', id: editing.id, targetId: data.get('target'), relation: data.get('relation') });
       } else if (mode === 'move') {
@@ -120,7 +109,6 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
         render();
       }
       dialog.close();
-      if (createdId) reveal(createdId);
       notify('Gespeichert.');
     } catch (error) { q('[data-thinking-error]').textContent = error.message; button.disabled = false; }
   });

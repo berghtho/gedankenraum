@@ -1,10 +1,8 @@
 import { randomBytes } from 'node:crypto';
 
-export const REFLECTION_KINDS = {
-  commonalities: 'Gemeinsamkeiten',
-  contradictions: 'Widersprüche',
-  questions: 'Offene Fragen',
-};
+import { REFLECTION_KINDS } from './util.mjs';
+
+export { REFLECTION_KINDS };
 
 export const REFLECTION_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['summary', 'findings'],

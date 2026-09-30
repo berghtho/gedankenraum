@@ -76,7 +76,8 @@ test('renaming a tag also updates keyword-only thoughts and undoes the whole rep
   await board.execute({ type: 'capture', input: 'Nur Vorschlag' });
   await board.whenIdle();
   await board.execute({ type: 'retag', id: idea.id, tags: ['Tokenverbrauch'] });
-  await board.execute({ type: 'renametag', from: 'Tokenverbrauch', to: 'Tokenkosten' });
+  const renamed = await board.execute({ type: 'renametag', from: 'Tokenverbrauch', to: 'Tokenkosten' });
+  assert.deepEqual(renamed.ideas, board.snapshot().ideas);
   assert.deepEqual(board.snapshot().ideas.map((item) => item.keywords), [['Tokenkosten'], ['Tokenkosten']]);
   await board.execute({ type: 'undo' });
   assert.deepEqual(board.snapshot().ideas.find((item) => item.id === idea.id).tags, ['Tokenverbrauch']);

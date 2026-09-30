@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, windowAround } from './search.mjs';
+import { isWebUrl } from './util.mjs';
 
 test('link keys ignore protocol, www, trailing slash, anchors, tracking and YouTube variants', () => {
   const video = linkKey('https://www.youtube.com/watch?v=abc123&t=42s&si=xyz');
@@ -45,6 +46,30 @@ test('hits map back to original positions, including ß and surrogate pairs', ()
   assert.deepEqual(hits.map(({ start, end }) => text.slice(start, end)), ['Straße', 'straße']);
   assert.deepEqual(hitsIn(text, termsOf('hütte')).map(({ start, end }) => text.slice(start, end)), ['Hütte']);
   assert.deepEqual(hitsIn(text, termsOf('stras')).map(({ start, end }) => text.slice(start, end)), ['Straß', 'straß']);
+});
+
+// Der frühere Weg: jedes Zeichen einzeln durch fold().
+const slowFoldMap = (raw) => {
+  const idx = [];
+  let folded = '';
+  for (let i = 0; i < raw.length;) {
+    const length = raw.codePointAt(i) > 0xffff ? 2 : 1;
+    const part = fold(raw.slice(i, i + length));
+    for (let k = 0; k < part.length; k += 1) idx.push(i);
+    folded += part;
+    i += length;
+  }
+  idx.push(raw.length);
+  return { folded, idx };
+};
+
+test('fast ASCII folding maps exactly like folding every character', () => {
+  for (const text of ['', 'ABC xyz 123 !?-_[]{}~', 'Größe MASSE Straße', 'Café e\u0301 İstanbul ÆØÅ', '🙂 Hütte 🙂ß\tTab\nZeile', 'ŒUVRE façade ÀÉÎÕÜ Ÿ ǅ']) {
+    assert.deepEqual(foldMap(text), slowFoldMap(text), text);
+  }
+  const mixed = 'Die HÜTTE am Straßenrand: 3 Tage, 2 Nächte.';
+  assert.equal(foldMap(mixed).folded, fold(mixed));
+  assert.deepEqual(hitsIn(mixed, termsOf('huette strasse NACHTE')).map(({ start, end }) => mixed.slice(start, end)), ['HÜTTE', 'Straße', 'Nächte']);
 });
 
 test('overlapping hits merge and marking escapes HTML around them', () => {
@@ -97,4 +122,20 @@ test('host and path of links are readable', () => {
   assert.equal(pathOf('https://www.heise.de/news/abc?x=1'), '/news/abc?x=1');
   assert.equal(pathOf('https://grugbrain.dev/'), '');
   assert.equal(hostOf('kein link'), 'kein link');
+});
+
+test('only http(s) addresses count as web links', () => {
+  for (const url of ['https://example.org/a', 'http://example.org', ' HTTPS://Example.org ']) assert.ok(isWebUrl(url), url);
+  for (const url of ['javascript:alert(1)', ' javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,x', 'file:///c:/x', '//example.org', 'kein link', '', null, undefined]) assert.ok(!isWebUrl(url), String(url));
+});
+
+test('a clicked topic matches exactly, a typed thema: matches as prefix', () => {
+  const topics = ['Kunst', 'Kunstgeschichte', 'Baukunst', 'Hütten', 'kunst'].map(fold);
+  const pick = (matcher) => topics.filter(matcher);
+  assert.deepEqual(pick(topicMatcher('Kunst', null)), ['kunst', 'kunst']);
+  assert.deepEqual(pick(topicMatcher('Kunst', 'bau')), ['kunst', 'kunst'], 'the chip wins over typed text');
+  assert.deepEqual(pick(topicMatcher(null, 'kunst')), ['kunst', 'kunstgeschichte', 'kunst']);
+  assert.deepEqual(pick(topicMatcher(null, 'huett')), ['hutten']);
+  assert.equal(topicMatcher(null, ''), null);
+  assert.equal(topicMatcher(null, null), null);
 });

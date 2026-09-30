@@ -1,3 +1,5 @@
+import { compact } from './util.mjs';
+
 const STOP_WORDS = new Set([
   'aber', 'alle', 'auch', 'auf', 'aus', 'bei', 'das', 'dass', 'dem', 'den', 'der', 'des', 'die',
   'ein', 'eine', 'einer', 'eines', 'für', 'hat', 'hier', 'ist', 'mit', 'nicht', 'oder', 'sich',
@@ -5,7 +7,6 @@ const STOP_WORDS = new Set([
   'from', 'that', 'this', 'with', 'you', 'your',
 ]);
 
-const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const words = (value, minimumLength = 3) => (compact(value).toLocaleLowerCase('de-DE').match(/[\p{L}\p{N}][\p{L}\p{N}-]*/gu) ?? [])
   .filter((word) => word.length >= minimumLength);
 

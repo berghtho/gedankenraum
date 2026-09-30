@@ -1,7 +1,24 @@
 import { isDerived } from './thought-kinds.mjs';
+import { html } from './util.mjs';
 
 export const relationLabels = { builds: 'baut auf', contradicts: 'widerspricht', example: 'Beispiel für' };
-const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+export const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
+// Die Farbe hängt nur am Namen des Themas (FNV-1a), damit ein neues Thema keine anderen umfärbt.
+export function topicColor(topic) {
+  let hash = 0x811c9dc5;
+  for (const char of String(topic ?? '')) hash = Math.imul(hash ^ char.codePointAt(0), 0x01000193);
+  return TOPIC_COLORS[(hash >>> 0) % TOPIC_COLORS.length];
+}
+
+// Verbindungen eines Gedankens: sein Elternknoten und jede benannte Beziehung zu einem vorhandenen Gedanken.
+export function connectionCount(idea, ideas) {
+  const ids = new Set(ideas.map((item) => item.id));
+  let count = ids.has(idea.parentId) ? 1 : 0;
+  for (const from of ideas) for (const edge of from.relations ?? []) {
+    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ids.has(edge.targetId)) count += 1;
+  }
+  return count;
+}
 
 // Übernommene Vorschläge und Recherche-Befunde hängen in der Mindmap an dem ersten sichtbaren Gedanken,
 // auf dem sie aufbauen. Ein selbst gesetzter Elternknoten geht vor; gespeichert wird dabei nichts.
@@ -49,7 +66,7 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
   return { nodes, edges, parents, width: Math.max(600, ...nodes.map((node) => node.x + 288)), height: Math.max(380, row * 112 + 64) };
 }
 
-export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) {
+export function mindmapMarkup(ideas, selectedId, { collapsed, zoom }) {
   const layout = layoutMindmap(ideas, collapsed);
   const positions = new Map(layout.nodes.map((node) => [node.idea.id, node]));
   const links = layout.edges.map(({ from, to, derived }) => `<path${derived ? ' class="ib-mm-derived"' : ''} d="M${from.x + 248},${from.y + 42} C${from.x + 278},${from.y + 42} ${to.x - 30},${to.y + 42} ${to.x},${to.y + 42}"/>`);
@@ -58,7 +75,7 @@ export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) 
     if (!to || (from.idea.id !== selectedId && to.idea.id !== selectedId) || !relationLabels[relation.type]) continue;
     const x1 = from.x + 124; const y1 = from.y + 84;
     const x2 = to.x + 124; const y2 = to.y + 84;
-    links.push(`<path class="ib-mm-relation" marker-end="url(#mm-arrow)" d="M${x1},${y1} Q${(x1 + x2) / 2 + 80},${Math.max(y1, y2) + 48} ${x2},${y2}"><title>${escape(`${from.idea.title} ${relationLabels[relation.type]} ${to.idea.title}`)}</title></path>`);
+    links.push(`<path class="ib-mm-relation" marker-end="url(#mm-arrow)" d="M${x1},${y1} Q${(x1 + x2) / 2 + 80},${Math.max(y1, y2) + 48} ${x2},${y2}"><title>${html(`${from.idea.title} ${relationLabels[relation.type]} ${to.idea.title}`)}</title></path>`);
   }
   return `<div class="ib-mm-toolbar" aria-label="Mindmap Werkzeuge">
     <button type="button" data-mm-new="root">+ Gedanke</button>
@@ -69,9 +86,9 @@ export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) 
     <div class="ib-mm-size" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
       <div class="ib-mm-canvas" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
         <svg class="ib-mm-lines" width="${layout.width}" height="${layout.height}" aria-hidden="true"><defs><marker id="mm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8"/></marker></defs>${links.join('')}</svg>
-        ${layout.nodes.map(({ idea, x, y, children }) => `<div class="ib-mm-node${idea.id === selectedId ? ' is-selected' : ''}${isDerived(idea) ? ' is-derived' : ''}" style="left:${x}px;top:${y}px;--node-color:${colorFor(idea.topic)}" data-mm-id="${escape(idea.id)}">
-          <button class="ib-mm-select" type="button" data-idea-id="${escape(idea.id)}" aria-label="${escape(idea.title)}"><span>${escape(idea.topic)}</span><b>${escape(idea.title)}</b>${idea.analysisState === 'pending' ? '<i>Analyse läuft …</i>' : ''}</button>
-          ${children ? `<button class="ib-mm-collapse" type="button" data-mm-collapse="${escape(idea.id)}" aria-expanded="${!collapsed.has(idea.id)}" aria-label="Zweig ${collapsed.has(idea.id) ? 'ausklappen' : 'einklappen'}">${collapsed.has(idea.id) ? '+' : '−'} ${children}</button>` : ''}
+        ${layout.nodes.map(({ idea, x, y, children }) => `<div class="ib-mm-node${idea.id === selectedId ? ' is-selected' : ''}${isDerived(idea) ? ' is-derived' : ''}" style="left:${x}px;top:${y}px;--node-color:${topicColor(idea.topic)}" data-mm-id="${html(idea.id)}">
+          <button class="ib-mm-select" type="button" data-idea-id="${html(idea.id)}" aria-label="${html(idea.title)}"><span>${html(idea.topic)}</span><b>${html(idea.title)}</b>${idea.analysisState === 'pending' ? '<i>Analyse läuft …</i>' : ''}</button>
+          ${children ? `<button class="ib-mm-collapse" type="button" data-mm-collapse="${html(idea.id)}" aria-expanded="${!collapsed.has(idea.id)}" aria-label="Zweig ${collapsed.has(idea.id) ? 'ausklappen' : 'einklappen'}">${collapsed.has(idea.id) ? '+' : '−'} ${children}</button>` : ''}
         </div>`).join('')}
       </div>
     </div>

@@ -136,13 +136,13 @@ test('layout collapses descendants, promotes filtered or orphaned children, and 
   assert.equal(layoutMindmap(ideas.slice(1)).nodes[0].x, 32);
   const cycle = [{ id: 'a', parentId: 'b' }, { id: 'b', parentId: 'a' }];
   assert.equal(layoutMindmap(cycle).nodes.length, 2);
-  const markup = mindmapMarkup([{ id: '<x>', title: '<script>alert(1)</script>' }], '<x>', () => '#fff', { collapsed: new Set(), zoom: 1 });
+  const markup = mindmapMarkup([{ id: '<x>', title: '<script>alert(1)</script>' }], '<x>', { collapsed: new Set(), zoom: 1 });
   assert.doesNotMatch(markup, /<script>/);
 });
 
 test('mindmap colors thoughts adopted from an evaluation apart from their sources', () => {
   const ideas = [{ id: 'source', title: 'Quelle' }, { id: 'adopted', title: 'Vorschlag', reflectionOrigin: { id: 'r', index: 0 } }];
-  const markup = mindmapMarkup(ideas, null, () => '#fff', { collapsed: new Set(), zoom: 1 });
+  const markup = mindmapMarkup(ideas, null, { collapsed: new Set(), zoom: 1 });
   assert.match(markup, /class="ib-mm-node is-derived"[^>]*data-mm-id="adopted"/);
   assert.match(markup, /class="ib-mm-node"[^>]*data-mm-id="source"/);
 });
@@ -170,7 +170,7 @@ test('adopted suggestions and findings sit to the right of the thought they buil
   const filtered = layoutMindmap(ideas.filter((idea) => !['source', 'other'].includes(idea.id))).nodes;
   assert.equal(at('question', filtered).x, 32);
   assert.equal(at('finding', filtered).x, 332);
-  assert.match(mindmapMarkup(ideas, null, () => '#fff', { collapsed: new Set(), zoom: 1 }), /class="ib-mm-derived"/);
+  assert.match(mindmapMarkup(ideas, null, { collapsed: new Set(), zoom: 1 }), /class="ib-mm-derived"/);
 });
 
 test('an adopted thought with a filtered explicit parent becomes a root instead of moving under a source', () => {

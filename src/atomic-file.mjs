@@ -2,6 +2,8 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 let writeSeq = 0;
+// Synchron warten, ohne die CPU zu belasten: Atomics.wait schläft bis zum Timeout.
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
 
 export function atomicReplaceText(path, contents) {
   mkdirSync(dirname(path), { recursive: true });
@@ -17,8 +19,7 @@ export function atomicReplaceText(path, contents) {
         try { rmSync(tmp, { force: true }); } catch { /* Cleanup must not hide the write error. */ }
         throw error;
       }
-      const until = Date.now() + 20 * (attempt + 1);
-      while (Date.now() < until) { /* Returning means the replacement is complete. */ }
+      Atomics.wait(sleeper, 0, 0, 20 * (attempt + 1));
     }
   }
 }

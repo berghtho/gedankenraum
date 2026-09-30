@@ -29,6 +29,7 @@ test('research runs after pending analysis, stores sourced findings and leaves t
   const undoSteps = board.history.length;
   const started = await board.execute({ type: 'research', id: idea.id });
   assert.equal(started.idea.research.status, 'pending');
+  assert.equal(board.snapshot().ideas[0].research.resultId, started.idea.research.requestedAt);
   await assert.rejects(() => board.execute({ type: 'research', id: idea.id }), /läuft bereits/);
   await board.whenIdle();
   assert.equal(request.source.summary, 'Kurz: Hilft Schlaf beim Lernen?');
@@ -39,6 +40,44 @@ test('research runs after pending analysis, stores sourced findings and leaves t
   assert.equal(saved.research.engine, 'Test-KI');
   assert.ok(saved.research.completedAt);
   assert.equal(board.history.length, undoSteps);
+});
+
+test('a running research does not hold back the analysis of new thoughts and reflections', { timeout: 3000 }, async () => {
+  const gate = deferred(); const entered = deferred();
+  const board = boardFor({
+    research: async () => { entered.resolve(); await gate.promise; return { summary: 'Spät', findings: [] }; },
+    reflect: async () => ({ summary: 'Gemeinsam', findings: [], engine: 'Test-KI' }),
+  });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.execute({ type: 'research', id: idea.id });
+  await entered.promise;
+  const fresh = (await board.execute({ type: 'capture', input: 'Neuer Gedanke' })).idea;
+  await board.execute({ type: 'reflect', kind: 'commonalities', ideaIds: [idea.id, fresh.id] });
+  for (let tries = 0; tries < 200 && (board.snapshot().ideas.find((item) => item.id === fresh.id).analysisState === 'pending'
+    || board.snapshot().reflections[0].status === 'pending'); tries += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(board.snapshot().ideas.find((item) => item.id === fresh.id).summary, 'Kurz: Neuer Gedanke');
+  assert.equal(board.snapshot().reflections[0].status, 'ready');
+  assert.equal(board.snapshot().ideas.find((item) => item.id === idea.id).research.status, 'pending');
+  gate.resolve(); await board.whenIdle();
+  assert.equal(board.snapshot().ideas.find((item) => item.id === idea.id).research.status, 'ready');
+});
+
+test('a thought re-analyzed during its research keeps the research and is analyzed afterwards', { timeout: 3000 }, async () => {
+  const gate = deferred(); const entered = deferred(); let round = 1;
+  const board = boardFor({
+    analyze: async ({ input }) => ({ title: input, summary: `Runde ${round}`, topic: 'Test', keyPoints: [], keywords: [] }),
+    research: async () => { entered.resolve(); await gate.promise; return { summary: 'Antwort', findings: [] }; },
+  });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.whenIdle();
+  await board.execute({ type: 'research', id: idea.id });
+  await entered.promise;
+  round = 2;
+  await board.execute({ type: 'reanalyzeAll' });
+  gate.resolve(); await board.whenIdle();
+  const saved = board.snapshot().ideas[0];
+  assert.equal(saved.research.status, 'ready');
+  assert.equal(saved.summary, 'Runde 2');
 });
 
 test('a failed re-run keeps the previous result visible, can be retried and rejects non-web sources', async () => {
@@ -101,7 +140,7 @@ test('adopting research rejects a result replaced since it was displayed', async
   text = 'Zweiter Befund';
   await board.execute({ type: 'research', id: idea.id }); await board.whenIdle();
   await assert.rejects(() => board.execute({
-    type: 'acceptResearch', id: idea.id, index: 0, resultId: displayed.resultId ?? displayed.completedAt,
+    type: 'acceptResearch', id: idea.id, index: 0, resultId: displayed.resultId,
   }), /Recherche.*geändert/);
   const current = board.snapshot().ideas[0].research;
   const accepted = await board.execute({ type: 'acceptResearch', id: idea.id, index: 0, resultId: current.resultId });

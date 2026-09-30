@@ -4,6 +4,8 @@ import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 
+import { compact } from './util.mjs';
+
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
 
@@ -94,7 +96,6 @@ function decodeEntities(value) {
   });
 }
 
-const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 
 function metaContent(html, names) {
   const wanted = new Set(names);

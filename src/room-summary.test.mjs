@@ -63,6 +63,10 @@ test('overview markup escapes text, opens thoughts and only links web sources', 
   assert.match(markup, /data-source-live="q1"/);
   assert.match(markup, /Befund &lt;b&gt;/);
   assert.doesNotMatch(markup, /Befund <b>|href="javascript/);
+  const forged = { ...digest, sources: [{ title: 'Böse', url: 'javascript:alert(1)' }, { title: 'Gut', url: 'https://example.org/' }] };
+  assert.doesNotMatch(digestMarkup(forged), /javascript:/);
+  assert.match(digestMarkup(forged), /<span>Böse<\/span>.*href="https:\/\/example\.org\/"/s);
+  assert.doesNotMatch(digestMarkdown(forged, date), /javascript:/);
   assert.equal(digestFileName(digest, '-folien'), 'wie-lernen-wir-besser-folien.md');
   assert.equal(digestFileName({ question: '???' }), 'arbeitsraum.md');
 });

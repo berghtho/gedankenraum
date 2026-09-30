@@ -1,6 +1,5 @@
 import { similarTagGroups } from './tag-match.mjs';
-
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+import { byUse, html, tagCounts } from './util.mjs';
 
 // Tags aufräumen: Schreibvarianten erkennt Gedankenraum selbst, gleichbedeutende Tags schlägt Codex auf Wunsch vor.
 // Zusammengelegt wird erst per Klick und je Gruppe; rückgängig wie jede Tag-Änderung.
@@ -12,11 +11,6 @@ export function initTagCleanup({ root, snapshot, request, render, notify }) {
   let suggested = null;
   let loading = false;
   let error = '';
-  const counts = () => {
-    const map = new Map();
-    for (const idea of snapshot().ideas) for (const tag of idea.tags ?? []) map.set(tag, (map.get(tag) ?? 0) + 1);
-    return map;
-  };
   const groupMarkup = (group, label, known) => {
     const tags = group.tags.filter((tag) => known.has(tag));
     if (tags.length < 2) return '';
@@ -28,8 +22,8 @@ export function initTagCleanup({ root, snapshot, request, render, notify }) {
     </fieldset>`;
   };
   const draw = () => {
-    const known = counts();
-    const ordered = [...known].sort(([, left], [, right]) => right - left).map(([tag]) => tag);
+    const known = tagCounts(snapshot().ideas);
+    const ordered = byUse(known).map(([tag]) => tag);
     const variants = similarTagGroups(ordered).map((tags) => groupMarkup({ into: tags[0], tags }, 'ÄHNLICHE SCHREIBWEISEN · BITTE PRÜFEN', known)).join('');
     const proposals = (suggested ?? []).map((group) => groupMarkup(group, 'VORSCHLAG VON CODEX', known)).join('');
     dialog.innerHTML = `<div class="ib-dialog-head"><div><span>TAGS</span><h2 id="tag-cleanup-title">Tags aufräumen</h2></div><button class="ib-dialog-close" type="button" data-cleanup-close aria-label="Schließen">✕</button></div>
