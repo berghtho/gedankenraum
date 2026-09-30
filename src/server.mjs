@@ -138,6 +138,11 @@ async function answersAsGedankenraum(address) {
   }
 }
 
+const STARTING_LIMIT = 2 * 60_000;
+const lockAge = (lockPath) => {
+  try { return Date.now() - statSync(lockPath).mtimeMs; } catch { return Infinity; }
+};
+
 export async function claimInstance(lockPath) {
   mkdirSync(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -164,8 +169,8 @@ export async function claimInstance(lockPath) {
       if (error.code !== 'EEXIST') throw error;
       let existing = null;
       try { existing = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { /* Incomplete stale lock. */ }
-      // Ohne Adresse startet die Instanz noch.
-      if (processIsRunning(existing?.pid) && (!existing.url || await answersAsGedankenraum(existing.url))) {
+      // Ohne Adresse startet die Instanz noch – aber nicht ewig: Dann ist sie abgestürzt und die Prozess-ID neu vergeben.
+      if (processIsRunning(existing?.pid) && (existing.url ? await answersAsGedankenraum(existing.url) : lockAge(lockPath) < STARTING_LIMIT)) {
         return { existing, update() {}, release() {} };
       }
       try { unlinkSync(lockPath); } catch (unlinkError) {

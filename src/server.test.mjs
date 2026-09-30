@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -288,6 +288,12 @@ test('a lock of a reused process ID does not block the start; a running or start
   try {
     lock(null);
     assert.equal((await claimInstance(lockPath)).existing.pid, process.pid);
+    // Ohne Adresse und lange nach dem Start: abgestürzt, die Prozess-ID wurde neu vergeben.
+    const old = new Date(Date.now() - 10 * 60_000);
+    utimesSync(lockPath, old, old);
+    const stale = await claimInstance(lockPath);
+    assert.equal(stale.existing, null);
+    stale.release();
     lock(running);
     assert.equal((await claimInstance(lockPath)).existing.url, running);
 
