@@ -85,7 +85,9 @@ Sammlung dorthin übernommen. Die Auswahl gilt auch nach einem Neustart.
 
 Liegt die `ideas.json` in einem Git-Repository und ist dort eingecheckt, erscheint im Menü `PUSH`, sobald
 sie geändert wurde oder Commits noch nicht gepusht sind. Ein Klick committet nur die `ideas.json` und führt
-`git push` aus; andere Dateien im Repository bleiben unberührt. Die Anmeldung übernimmt der in Git
+`git push` aus; andere Dateien im Repository bleiben unberührt. Der Push nimmt aber alle noch nicht
+gepushten Commits des Branches mit; wie viele davon nicht von Gedankenraum stammen, steht als „fremde“
+Commits am Menüpunkt. Die Anmeldung übernimmt der in Git
 eingerichtete Credential Helper. Hat das Remote-Repository neuere Änderungen, führt Gedankenraum nichts
 zusammen: Der Commit bleibt lokal, und nach einem `git pull` im Repository lässt sich erneut pushen.
 

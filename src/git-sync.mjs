@@ -32,7 +32,10 @@ export async function gitStatus(filePath) {
     const branch = header('head');
     if (!branch || branch === '(detached)') return { available: false, reason: 'Im Repository ist kein Branch ausgecheckt.' };
     const [, ahead = '0', behind = '0'] = /^\+(\d+) -(\d+)$/.exec(header('ab') ?? '') ?? [];
-    return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead), behind: Number(behind) };
+    // Ein Push nimmt alle ausgehenden Commits mit, auch solche, die nicht von Gedankenraum stammen.
+    const subjects = Number(ahead) ? (await git(['log', '--format=%s', '@{u}..HEAD'], cwd)).split(/\r?\n/).filter(Boolean) : [];
+    const foreign = subjects.filter((subject) => subject !== COMMIT_MESSAGE).length;
+    return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead), behind: Number(behind), foreign };
   } catch (error) {
     return { available: false, reason: error.message };
   }

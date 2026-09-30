@@ -42,7 +42,7 @@ test('push is only offered for an ideas.json that git tracks', async () => {
   writeFileSync(join(work, 'andere', 'ideas.json'), '{}\n');
   assert.equal((await gitStatus(join(work, 'andere', 'ideas.json'))).available, false);
   await assert.rejects(commitAndPush(join(work, 'andere', 'ideas.json')), /nicht in Git eingecheckt/);
-  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0 });
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0, foreign: 0 });
 });
 
 test('push commits only ideas.json and leaves other changes in the repository alone', async () => {
@@ -54,12 +54,23 @@ test('push commits only ideas.json and leaves other changes in the repository al
   assert.equal((await gitStatus(file)).changed, true);
 
   const result = await commitAndPush(file);
-  assert.deepEqual(result, { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0, pushed: true });
+  assert.deepEqual(result, { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 0, behind: 0, foreign: 0, pushed: true });
   assert.equal(git(remote, 'log', '-1', '--format=%s', 'main').trim(), 'Gedankenraum: ideas.json aktualisiert');
   assert.equal(git(remote, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main').trim(), 'ideas.json');
   assert.equal(git(remote, 'show', 'main:ideas.json'), '{"version":1,"ideas":[{"id":"a"}]}\n');
   assert.deepEqual(git(work, 'status', '--porcelain').trimEnd().split('\n').sort(), [' M notes.txt', 'A  staged.txt']);
   assert.equal((await commitAndPush(file)).pushed, false);
+});
+
+test('status counts outgoing commits that Gedankenraum did not make', async () => {
+  const { work, file } = repository();
+  writeFileSync(join(work, 'notes.txt'), 'Eigener Commit\n');
+  git(work, 'commit', '-am', 'Notiz');
+  writeFileSync(file, '{"version":1,"ideas":[{"id":"c"}]}\n');
+  git(work, 'commit', '-am', 'Gedankenraum: ideas.json aktualisiert');
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 2, behind: 0, foreign: 1 });
+  git(work, 'branch', '--unset-upstream');
+  assert.equal((await gitStatus(file)).foreign, 0);
 });
 
 test('a rejected push keeps the local commit and can be pushed again after a pull', async () => {
@@ -71,10 +82,11 @@ test('a rejected push keeps the local commit and can be pushed again after a pul
 
   writeFileSync(file, '{"version":1,"ideas":[{"id":"b"}]}\n');
   await assert.rejects(commitAndPush(file), /neuere Änderungen.*pullen.*Commit bleibt lokal erhalten/);
-  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 1, behind: 0 });
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 1, behind: 0, foreign: 0 });
 
   git(work, 'pull', '--no-rebase', '--no-edit');
-  assert.equal((await gitStatus(file)).ahead, 2);
+  // Der Merge-Commit stammt nicht von Gedankenraum und wird mit gepusht.
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 2, behind: 0, foreign: 1 });
   assert.equal((await commitAndPush(file)).ahead, 0);
   assert.equal(git(remote, 'show', 'main:ideas.json'), '{"version":1,"ideas":[{"id":"b"}]}\n');
   assert.equal(git(remote, 'show', 'main:notes.txt'), 'Von woanders\n');
