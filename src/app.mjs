@@ -609,7 +609,6 @@ export function initGedankenraum({ root, getToken }) {
     detailOpen = false; spaces.closeResults(); inline.openEdit(idea);
   };
   const thinking = initThinkingTools({
-    parentOf,
     root, snapshot: () => ({ ideas, trash, canUndo }), selected, command: runCommand,
     render, notify: showMessage, reveal, openInline: editInline,
     newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
