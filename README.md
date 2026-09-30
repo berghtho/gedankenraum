@@ -85,14 +85,16 @@ Sammlung dorthin übernommen. Die Auswahl gilt auch nach einem Neustart.
 
 Liegt die `ideas.json` in einem Git-Repository und ist dort eingecheckt, erscheint im Menü `PUSH`, sobald
 sie geändert wurde oder Commits noch nicht gepusht sind. Ein Klick committet nur die `ideas.json` und führt
-`git push` aus; andere Dateien im Repository bleiben unberührt. Die Anmeldung übernimmt der in Git
+`git push` aus; andere Dateien im Repository bleiben unberührt. Der Push nimmt aber alle noch nicht
+gepushten Commits des Branches mit; wie viele davon nicht von Gedankenraum stammen, steht als „fremde“
+Commits am Menüpunkt. Die Anmeldung übernimmt der in Git
 eingerichtete Credential Helper. Hat das Remote-Repository neuere Änderungen, führt Gedankenraum nichts
 zusammen: Der Commit bleibt lokal, und nach einem `git pull` im Repository lässt sich erneut pushen.
 
 Beim Start holt Gedankenraum neue Commits aus dem Remote-Repository, bevor die Sammlung geladen wird, aber
 nur per Fast-Forward. Gibt es hier und im Remote-Repository verschiedene neue Commits oder würde eine noch
 nicht gepushte `ideas.json` überschrieben, bleibt alles unverändert und ein Hinweis erscheint. Ist das
-Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 15 Sekunden ohne Update.
+Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 5 Sekunden ohne Update.
 
 Über `IMPORT` kann eine bestehende `ideas.json` ausgewählt werden. Ihre Gedanken werden mit der
 aktuellen Sammlung zusammengeführt; bereits vorhandene IDs werden übersprungen.
