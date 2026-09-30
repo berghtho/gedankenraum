@@ -29,6 +29,7 @@ test('research runs after pending analysis, stores sourced findings and leaves t
   const undoSteps = board.history.length;
   const started = await board.execute({ type: 'research', id: idea.id });
   assert.equal(started.idea.research.status, 'pending');
+  assert.equal(board.snapshot().ideas[0].research.resultId, started.idea.research.requestedAt);
   await assert.rejects(() => board.execute({ type: 'research', id: idea.id }), /läuft bereits/);
   await board.whenIdle();
   assert.equal(request.source.summary, 'Kurz: Hilft Schlaf beim Lernen?');
@@ -139,7 +140,7 @@ test('adopting research rejects a result replaced since it was displayed', async
   text = 'Zweiter Befund';
   await board.execute({ type: 'research', id: idea.id }); await board.whenIdle();
   await assert.rejects(() => board.execute({
-    type: 'acceptResearch', id: idea.id, index: 0, resultId: displayed.resultId ?? displayed.completedAt,
+    type: 'acceptResearch', id: idea.id, index: 0, resultId: displayed.resultId,
   }), /Recherche.*geändert/);
   const current = board.snapshot().ideas[0].research;
   const accepted = await board.execute({ type: 'acceptResearch', id: idea.id, index: 0, resultId: current.resultId });

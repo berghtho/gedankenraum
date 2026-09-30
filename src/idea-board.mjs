@@ -72,6 +72,7 @@ const mergeById = (current = [], incoming = []) => {
   return [...current, ...incoming.filter((item) => { if (known.has(item.id)) return false; known.add(item.id); return true; })];
 };
 
+// Nach jedem Lesen und Schreiben hat jede Recherche eine resultId; ein Befund hat sie, sobald sie sich ermitteln lässt.
 function normalizeResearchIds(ideas) {
   // Alte Recherchen verwendeten Zeitstempel als Identität, teils ohne Abschlusszeit.
   for (const idea of ideas) {
@@ -557,11 +558,11 @@ export class IdeaBoard {
     const research = question.research;
     const finding = research?.findings?.[command.index];
     if (!Number.isInteger(command.index) || command.index < 0 || !finding) throw new IdeaBoardValidationError('Befund wurde nicht gefunden.');
-    const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
+    const { resultId } = research;
     if (typeof command.resultId !== 'string' || command.resultId !== resultId) throw new IdeaBoardValidationError('Die Recherche hat sich geändert. Bitte den aktuellen Befund auswählen.');
     const origin = { ideaId: question.id, resultId, completedAt: research.completedAt ?? null, index: command.index };
     const sameOrigin = (idea) => idea.researchOrigin?.ideaId === origin.ideaId
-      && (idea.researchOrigin.resultId ?? idea.researchOrigin.completedAt) === resultId && idea.researchOrigin.index === origin.index;
+      && idea.researchOrigin.resultId === resultId && idea.researchOrigin.index === origin.index;
     const rooms = (state.rooms ?? []).filter((room) => !room.archivedAt && room.ideaIds.includes(question.id));
     const stamp = this.now().toISOString();
     const existing = state.ideas.find(sameOrigin);
