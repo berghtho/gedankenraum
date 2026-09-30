@@ -252,7 +252,9 @@ export function createGedankenraumServer({
         }
         const nextPath = join(nextDirectory, 'ideas.json');
         const previousPath = board.path;
-        if (nextPath !== previousPath && existsSync(nextPath) && !mode) {
+        // Windows-Pfade unterscheiden nicht zwischen Groß- und Kleinschreibung.
+        const samePath = process.platform === 'win32' ? nextPath.toLowerCase() === previousPath.toLowerCase() : nextPath === previousPath;
+        if (!samePath && existsSync(nextPath) && !mode) {
           return writeJson(res, 409, {
             error: 'Am gewählten Speicherort existiert bereits eine ideas.json.',
             requiresDecision: true,

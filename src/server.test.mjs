@@ -292,3 +292,20 @@ test('a lock of a reused process ID does not block the start; a running or start
     await new Promise((resolve) => app.server.close(resolve));
   }
 });
+
+test('choosing the current storage directory in other letter case is no conflict on Windows', { skip: process.platform !== 'win32' }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-case-'));
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: createLocalAnalyzer(), storageConfigurable: true });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+  const post = (path, body) => fetch(`${origin}${path}`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: JSON.stringify(body) });
+  try {
+    await post('/api/ideas/execute', { type: 'capture', input: 'Ein Gedanke' });
+    const response = await post('/api/storage', { directory: directory.toUpperCase() });
+    assert.equal(response.status, 200);
+    assert.equal(JSON.parse(readFileSync(join(directory, 'ideas.json'), 'utf8')).ideas.length, 1);
+  } finally {
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});
