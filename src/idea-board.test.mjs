@@ -244,3 +244,24 @@ test('thought links must be web addresses in imports and data files', async () =
   assert.throws(() => board.snapshot(), /ungültigen Link/);
   await assert.rejects(() => makeBoard().switchStorage(board.path), /ungültigen Link/);
 });
+
+test('imported unfinished analysis waits for an explicit retry, also when merging storage', async () => {
+  let calls = 0;
+  const board = makeBoard({ analyze: async () => { calls += 1; return { title: 'Analysiert' }; } });
+  const pending = { id: 'offen', title: 'Offen', input: 'Offen', source: 'text', analysisState: 'pending', analysisRevision: 3, reanalyze: 'ready' };
+  await board.importState({ version: 1, ideas: [pending] }); await board.whenIdle();
+  assert.equal(calls, 0);
+  const imported = board.snapshot().ideas[0];
+  assert.equal(imported.analysisState, 'failed');
+  assert.match(imported.analysisWarning, /Unfertige Analyse importiert/);
+  assert.equal(imported.reanalyze, undefined);
+  await board.execute({ type: 'retry', id: 'offen' }); await board.whenIdle();
+  assert.equal(calls, 1);
+  assert.equal(board.snapshot().ideas[0].title, 'Analysiert');
+
+  const target = join(mkdtempSync(join(tmpdir(), 'gedankenraum-pending-analysis-')), 'ideas.json');
+  writeFileSync(target, JSON.stringify({ version: 1, ideas: [{ ...pending, id: 'extern' }] }));
+  await board.switchStorage(target, 'merge'); await board.whenIdle();
+  assert.equal(calls, 1);
+  assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'extern').analysisState, 'failed');
+});

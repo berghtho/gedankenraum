@@ -82,9 +82,16 @@ const importedReflections = (items = []) => items.map((item) => item.status === 
   ? { ...item, status: 'failed', error: 'Unfertige Auswertung importiert. Prüfe die Quellen und starte sie mit „Erneut versuchen“.' }
   : item);
 // Wie bei Auswertungen startet der Import allein keine Übertragung an Codex.
-const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => idea.research?.status === 'pending'
-  ? { ...idea, research: { ...idea.research, status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' } }
-  : idea);
+const importedIdeas = (items = []) => normalizeResearchIds(structuredClone(items)).map((idea) => {
+  if (idea.analysisState === 'pending') {
+    delete idea.reanalyze;
+    Object.assign(idea, { analysisState: 'failed', analysisWarning: 'Unfertige Analyse importiert. Starte sie mit „Erneut versuchen“.' });
+  }
+  if (idea.research?.status === 'pending') {
+    Object.assign(idea.research, { status: 'failed', error: 'Unfertige Recherche importiert. Starte sie mit „Erneut versuchen“.' });
+  }
+  return idea;
+});
 
 export class IdeaBoard {
   constructor({
