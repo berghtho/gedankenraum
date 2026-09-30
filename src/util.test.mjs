@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { byUse, compact, html, REFLECTION_KINDS, tagCounts, tagsOf } from './util.mjs';
+import { byUse, compact, html, lower, REFLECTION_KINDS, tagCounts, tagsOf } from './util.mjs';
 import { REFLECTION_KINDS as reexported } from './reflection-analysis.mjs';
 
 test('html escapes markup characters and treats missing values as empty', () => {
@@ -11,10 +11,11 @@ test('html escapes markup characters and treats missing values as empty', () => 
   assert.equal(html(0), '0');
 });
 
-test('compact collapses whitespace and trims', () => {
+test('compact collapses whitespace and trims, lower folds case', () => {
   assert.equal(compact('  eins \n\t zwei  drei '), 'eins zwei drei');
   assert.equal(compact(null), '');
   assert.equal(compact(42), '42');
+  assert.equal(lower('ÄRGER'), 'ärger');
 });
 
 test('tag counts keep first appearance, byUse puts most-used first and keeps ties stable', () => {

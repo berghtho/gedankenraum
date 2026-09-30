@@ -3,6 +3,7 @@
 export const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
+export const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 export const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 

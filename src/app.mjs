@@ -5,15 +5,15 @@ import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
 import { initStorageDialog } from './storage-ui.mjs';
 import { initGitPush } from './git-ui.mjs';
+import { initTagDialog } from './tag-dialog.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
-import { html, tagCounts, tagsOf } from './util.mjs';
+import { html, lower, tagCounts, tagsOf } from './util.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
 const RAIL_SECTIONS = ['rooms', 'questions', 'tags', 'topics'];
 const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 
-const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
 // Formatierer einmal anlegen; je Zeile neu gebaut kosten sie beim Rendern spürbar.
@@ -307,7 +307,6 @@ export function initGedankenraum({ root, getToken }) {
   try { for (const key of JSON.parse(localStorage.getItem(RAIL_KEY) ?? '[]')) if (RAIL_SECTIONS.includes(key)) collapsedRail.add(key); } catch { /* Alles bleibt aufgeklappt. */ }
   // filter.global: ein Tag- oder Themenfilter, der aus einem geöffneten Gedanken kommt, sucht in der ganzen Sammlung.
   const filter = { tag: null, topic: null, question: null, query: '', global: false };
-  let editingTag = null;
   const foldCache = new Map();
   const coarse = window.matchMedia('(pointer:coarse)');
   const narrow = window.matchMedia('(max-width:900px)');
@@ -330,11 +329,6 @@ export function initGedankenraum({ root, getToken }) {
   const menuList = q('[data-menu-list]');
   const importOpen = q('[data-import-open]');
   const importFile = q('[data-import-file]');
-  const tagDialog = q('[data-tag-dialog]');
-  const tagName = q('[data-tag-name]');
-  const tagHint = q('[data-tag-hint]');
-  const tagSave = q('[data-tag-save]');
-  const tagHeading = q('[data-tag-heading]');
 
   const selected = () => ideas.find((idea) => idea.id === selectedId) ?? null;
   const showMessage = (text, error = false) => {
@@ -762,41 +756,9 @@ export function initGedankenraum({ root, getToken }) {
     captureInput.focus();
   });
 
-  const openTagDialog = (tag) => {
-    editingTag = tag;
-    tagName.value = tag;
-    tagHeading.textContent = `#${tag}`;
-    updateTagHint();
-    tagDialog.showModal();
-    tagName.select();
-  };
-  const updateTagHint = () => {
-    const target = tagName.value.trim().replace(/^#/, '');
-    const affected = ideas.filter((idea) => tagsOf(idea).includes(editingTag)).length;
-    const exists = target && lower(target) !== lower(editingTag) && ideas.some((idea) => tagsOf(idea).some((tag) => lower(tag) === lower(target)));
-    tagSave.disabled = !target || target === editingTag;
-    tagSave.textContent = exists ? 'ZUSAMMENLEGEN' : 'UMBENENNEN';
-    tagHint.textContent = exists
-      ? `#${target} existiert bereits. Beide Tags werden zusammengelegt (${affected} Gedanken betroffen).`
-      : target && target !== editingTag ? `${affected} Gedanke${affected === 1 ? '' : 'n'} ${affected === 1 ? 'wird' : 'werden'} umbenannt.` : '';
-  };
-  tagName.addEventListener('input', updateTagHint);
-  tagName.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !tagSave.disabled) tagSave.click(); });
-  for (const button of root.querySelectorAll('[data-tag-cancel]')) button.addEventListener('click', () => tagDialog.close());
-  tagSave.addEventListener('click', async () => {
-    const target = tagName.value.trim().replace(/^#/, '');
-    if (!target || !editingTag) return;
-    tagSave.disabled = true;
-    try {
-      const result = await post('/api/ideas/execute', { type: 'renametag', from: editingTag, to: target });
-      filter.tag = result.tag;
-      tagDialog.close();
-      showMessage(result.merged ? `#${editingTag} wurde in #${result.tag} zusammengelegt.` : `#${editingTag} heißt jetzt #${result.tag}.`);
-      render();
-    } catch (error) {
-      tagHint.textContent = error.message;
-      tagSave.disabled = false;
-    }
+  const tagDialog = initTagDialog({
+    root, snapshot: () => ({ ideas }), request: post, render, notify: showMessage,
+    showTag: (tag) => { filter.tag = tag; },
   });
 
   root.addEventListener('click', async (event) => {
@@ -826,7 +788,7 @@ export function initGedankenraum({ root, getToken }) {
       return render();
     }
     const tagEdit = target.closest?.('[data-idea-tag-edit]');
-    if (tagEdit) return openTagDialog(tagEdit.dataset.ideaTagEdit);
+    if (tagEdit) return tagDialog.open(tagEdit.dataset.ideaTagEdit);
     const tagRemove = target.closest?.('[data-idea-tag-remove]');
     const idea = selected();
     if (tagRemove && idea) {
