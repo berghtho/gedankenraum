@@ -510,11 +510,15 @@ export function initGedankenraum({ root, getToken }) {
   const post = async (path, command = {}) => {
     mutationCount += 1; epoch += 1;
     try {
-    const response = await fetch(path, {
+    const send = async (renew) => fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gedankenraum-token': await getToken() },
+      headers: { 'content-type': 'application/json', 'x-gedankenraum-token': await getToken(renew) },
       body: JSON.stringify(command),
     });
+    // Nach einem Neustart des Servers gilt das alte Token nicht mehr; abgewiesen wird vor jeder Änderung,
+    // also einmal mit frischem Token wiederholen.
+    let response = await send(false);
+    if (response.status === 403) response = await send(true);
     const payload = await response.json();
     if (!response.ok) throw Object.assign(new Error(payload.error ?? 'Aktion fehlgeschlagen.'), payload);
     applySnapshot(payload);
@@ -1093,8 +1097,8 @@ const root = document.getElementById('gedankenraum');
 let token = null;
 const app = initGedankenraum({
   root,
-  getToken: async () => {
-    if (token) return token;
+  getToken: async (renew = false) => {
+    if (token && !renew) return token;
     const response = await fetch('/api/session');
     const payload = await response.json();
     if (!response.ok || !payload.token) throw new Error(payload.error ?? 'Sitzung konnte nicht geöffnet werden.');
