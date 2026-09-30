@@ -614,7 +614,6 @@ export function initGedankenraum({ root, getToken }) {
     render, notify: showMessage, reveal, openInline: editInline,
     newInline: (kind, idea) => { resumePanel = false; detailOpen = false; spaces.closeResults(); inline.openNew(kind, idea); },
   });
-  const replaceIdea = (idea) => { ideas = ideas.map((item) => item.id === idea.id ? idea : item); };
   initTagCleanup({ root, snapshot: () => ({ ideas }), request: post, render, notify: showMessage });
   // Nach einem Modellwechsel alles noch einmal analysieren; läuft im Hintergrund und lässt sich abbrechen.
   const reanalyze = async () => {
@@ -631,9 +630,9 @@ export function initGedankenraum({ root, getToken }) {
       showMessage(`${result.queued} Gedanken werden neu analysiert. Abbrechen über ⋯.`);
     } catch (error) { showMessage(error.message, true); }
   };
+  // post() übernimmt den Snapshot der Antwort; danach nur noch zeichnen.
   const setTags = async (idea, tags) => {
-    const result = await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
-    replaceIdea(result.idea);
+    await post('/api/ideas/execute', { type: 'retag', id: idea.id, tags });
     render();
   };
   const setView = (next) => { view = next; localStorage.setItem(VIEW_KEY, next); render(); };
@@ -809,7 +808,6 @@ export function initGedankenraum({ root, getToken }) {
         throw new Error('Die gewählte Datei enthält kein gültiges JSON.');
       }
       const result = await post('/api/ideas/import', imported);
-      ideas = result.ideas;
       selectedId = null; detailOpen = false;
       const duplicates = result.skipped ? ` ${result.skipped} Duplikat${result.skipped === 1 ? '' : 'e'} übersprungen.` : '';
       showMessage(`${result.imported} Gedanke${result.imported === 1 ? '' : 'n'} importiert.${duplicates}${result.importedRooms ? ` ${result.importedRooms} Arbeitsräume übernommen.` : ''}${result.importedReflections ? ` ${result.importedReflections} Auswertungen übernommen.` : ''}`);
@@ -859,7 +857,6 @@ export function initGedankenraum({ root, getToken }) {
     tagSave.disabled = true;
     try {
       const result = await post('/api/ideas/execute', { type: 'renametag', from: editingTag, to: target });
-      ideas = result.ideas;
       filter.tag = result.tag;
       tagDialog.close();
       showMessage(result.merged ? `#${editingTag} wurde in #${result.tag} zusammengelegt.` : `#${editingTag} heißt jetzt #${result.tag}.`);
@@ -938,8 +935,7 @@ export function initGedankenraum({ root, getToken }) {
       } else if (target.closest?.('[data-idea-topic]')) {
         const topic = window.prompt('Neues Thema', idea.topic)?.trim();
         if (!topic || topic === idea.topic) return;
-        const result = await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
-        replaceIdea(result.idea);
+        await post('/api/ideas/execute', { type: 'retopic', id: idea.id, topic });
         render();
       } else if (target.closest?.('[data-research]')) {
         await runCommand({ type: 'research', id: idea.id });
@@ -954,7 +950,6 @@ export function initGedankenraum({ root, getToken }) {
         showMessage(answered ? 'Frage als beantwortet markiert.' : 'Frage ist wieder offen.');
       } else if (target.closest?.('[data-idea-delete]')) {
         await post('/api/ideas/execute', { type: 'delete', id: idea.id });
-        ideas = ideas.filter((item) => item.id !== idea.id);
         selectedId = null; detailOpen = false;
         showMessage('Im Papierkorb. Rückgängig mit Strg+Z oder über ⋯.');
         render();
@@ -1030,7 +1025,6 @@ export function initGedankenraum({ root, getToken }) {
     try {
       const result = await post('/api/storage', { directory: storageDirectory.value.trim(), ...(mode && { mode }) });
       spaces.reset();
-      ideas = result.ideas;
       selectedId = null; detailOpen = false;
       storageOpen.title = result.filePath;
       storageDialog.close();
