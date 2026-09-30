@@ -795,7 +795,7 @@ export class IdeaBoard {
     const target = existing ?? to;
     const merged = !!existing && !sameTag(from, to);
     const changed = this.#replaceTags(state, [from], target);
-    return { ideas: structuredClone(state.ideas), tag: target, merged, changed };
+    return { tag: target, merged, changed };
   }
 
   #delete(command) {
