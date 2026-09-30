@@ -3,6 +3,7 @@ import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
+import { initStorageDialog } from './storage-ui.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 import { html, tagCounts, tagsOf } from './util.mjs';
@@ -328,16 +329,6 @@ export function initGedankenraum({ root, getToken }) {
   const menuList = q('[data-menu-list]');
   const importOpen = q('[data-import-open]');
   const importFile = q('[data-import-file]');
-  const storageOpen = q('[data-storage-open]');
-  const storageDialog = q('[data-storage-dialog]');
-  const storageDirectory = q('[data-storage-directory]');
-  const storageFile = q('[data-storage-file]');
-  const storageBrowse = q('[data-storage-browse]');
-  const storageSave = q('[data-storage-save]');
-  const storageMessage = q('[data-storage-message]');
-  const storageDecision = q('[data-storage-decision]');
-  const storageMerge = q('[data-storage-merge]');
-  const storageReplace = q('[data-storage-replace]');
   const gitPush = q('[data-git-push]');
   const tagDialog = q('[data-tag-dialog]');
   const tagName = q('[data-tag-name]');
@@ -634,27 +625,6 @@ export function initGedankenraum({ root, getToken }) {
     render();
   };
 
-  const showStorageMessage = (text) => {
-    storageMessage.textContent = text ?? '';
-    storageMessage.hidden = !text;
-  };
-  const updateStorageFile = () => {
-    storageDecision.hidden = true;
-    const directory = storageDirectory.value.trim().replace(/[\\/]$/, '');
-    storageFile.textContent = directory ? `${directory}${directory.includes('\\') ? '\\' : '/'}ideas.json` : 'ideas.json';
-  };
-  const loadStorage = async () => {
-    const response = await fetch('/api/storage');
-    const storage = await response.json();
-    if (!response.ok) throw new Error(storage.error ?? 'Speicherort konnte nicht geladen werden.');
-    storageDirectory.value = storage.directory;
-    storageOpen.title = storage.filePath;
-    storageBrowse.hidden = !storage.canBrowse;
-    storageDirectory.disabled = !storage.configurable;
-    storageSave.disabled = !storage.configurable;
-    updateStorageFile();
-    return storage;
-  };
   // Ein bereits gespeicherter Link wird gezeigt statt verdoppelt. Im Raum landet er dort mit;
   // ein zweites Ablegen desselben Textes speichert ihn trotzdem neu.
   let duplicateInput = null;
@@ -981,66 +951,10 @@ export function initGedankenraum({ root, getToken }) {
       showMessage(error.message, true);
     }
   });
-  storageOpen.addEventListener('click', async () => {
-    closeMenu();
-    showStorageMessage('');
-    storageDecision.hidden = true;
-    try {
-      const storage = await loadStorage();
-      if (!storage.configurable) showStorageMessage('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
-      storageDialog.showModal();
-    } catch (error) {
-      showMessage(error.message, true);
-    }
+  const storage = initStorageDialog({
+    root, request: post, render, notify: showMessage, closeMenu,
+    reset: () => { spaces.reset(); selectedId = null; detailOpen = false; },
   });
-  storageDirectory.addEventListener('input', updateStorageFile);
-  storageBrowse.addEventListener('click', async () => {
-    storageBrowse.disabled = true;
-    showStorageMessage('Windows-Ordnerauswahl ist geöffnet.');
-    try {
-      const result = await post('/api/storage/browse', { initialDirectory: storageDirectory.value.trim() });
-      if (result.directory) {
-        storageDirectory.value = result.directory;
-        updateStorageFile();
-      }
-      showStorageMessage('');
-    } catch (error) {
-      showStorageMessage(error.message);
-    } finally {
-      storageBrowse.disabled = false;
-    }
-  });
-  const switchStorage = async (mode) => {
-    for (const button of [storageSave, storageMerge, storageReplace]) button.disabled = true;
-    storageDecision.hidden = true;
-    showStorageMessage('Speicherort wird geprüft.');
-    try {
-      const result = await post('/api/storage', { directory: storageDirectory.value.trim(), ...(mode && { mode }) });
-      spaces.reset();
-      selectedId = null; detailOpen = false;
-      storageOpen.title = result.filePath;
-      storageDialog.close();
-      const messages = {
-        created: 'Sammlung wurde am neuen Speicherort angelegt.',
-        merge: 'Sammlungen wurden zusammengeführt.',
-        replace: 'Zieldatei wurde durch die aktuelle Sammlung ersetzt.',
-        unchanged: 'Dieser Speicherort wird bereits verwendet.',
-      };
-      showMessage(messages[result.action] ?? 'Speicherort wurde geändert.');
-      render();
-    } catch (error) {
-      showStorageMessage(error.message);
-      storageDecision.hidden = !error.requiresDecision;
-    } finally {
-      for (const button of [storageSave, storageMerge, storageReplace]) button.disabled = false;
-    }
-  };
-  storageSave.addEventListener('click', () => switchStorage());
-  storageMerge.addEventListener('click', () => switchStorage('merge'));
-  storageReplace.addEventListener('click', () => switchStorage('replace'));
-  for (const selector of ['[data-storage-close]', '[data-storage-cancel]']) {
-    q(selector).addEventListener('click', () => storageDialog.close());
-  }
   gitPush.addEventListener('click', async () => {
     gitPush.disabled = true;
     showMessage('ideas.json wird committet und gepusht …');
@@ -1078,7 +992,7 @@ export function initGedankenraum({ root, getToken }) {
   window.addEventListener('pagehide', () => clearTimeout(pollTimer));
   return {
     async load() {
-      const [snapshotResponse] = await Promise.all([fetch('/api/ideas'), loadStorage()]);
+      const [snapshotResponse] = await Promise.all([fetch('/api/ideas'), storage.load()]);
       const snapshot = await snapshotResponse.json();
       if (!snapshotResponse.ok) throw new Error(snapshot.error ?? 'Gedankenraum konnte nicht geladen werden.');
       applySnapshot(snapshot);

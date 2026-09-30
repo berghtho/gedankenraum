@@ -19,7 +19,7 @@ const assetTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascri
 // Nur diese Dateien werden ausgeliefert.
 const assets = new Map([
   'index.html', 'app.mjs', 'mindmap.mjs', 'thinking-tools.mjs', 'workspace-ui.mjs', 'inline-thought.mjs', 'search.mjs',
-  'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'util.mjs', 'style.css',
+  'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'storage-ui.mjs', 'util.mjs', 'style.css',
 ].map((name) => [name === 'index.html' ? '/' : `/${name}`, { path: join(sourceHome, name), type: assetTypes[extname(name)] }]));
 
 export function defaultAppDirectory(env = process.env, platform = process.platform) {
