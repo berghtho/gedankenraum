@@ -16,12 +16,15 @@ const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
 const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
+// Formatierer einmal anlegen; je Zeile neu gebaut kosten sie beim Rendern spürbar.
+const DAY_MONTH = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short' });
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
 const relativeDate = (value) => {
   const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60_000);
   if (minutes < 1) return 'gerade eben';
   if (minutes < 60) return `vor ${minutes} Min.`;
   if (minutes < 1_440) return `vor ${Math.floor(minutes / 60)} Std.`;
-  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short' }).format(new Date(value));
+  return DAY_MONTH.format(new Date(value));
 };
 const dayLabel = (value) => {
   const date = new Date(value);
@@ -29,10 +32,7 @@ const dayLabel = (value) => {
   const days = Math.floor((today - new Date(date).setHours(0, 0, 0, 0)) / 86_400_000);
   if (days <= 0) return 'HEUTE';
   if (days === 1) return 'GESTERN';
-  const format = today.getFullYear() === date.getFullYear()
-    ? { day: '2-digit', month: 'short' }
-    : { day: '2-digit', month: 'short', year: 'numeric' };
-  return new Intl.DateTimeFormat('de-DE', format).format(date).toUpperCase();
+  return (today.getFullYear() === date.getFullYear() ? DAY_MONTH : DAY_MONTH_YEAR).format(date).toUpperCase();
 };
 
 const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());

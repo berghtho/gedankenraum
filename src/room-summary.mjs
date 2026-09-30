@@ -5,7 +5,8 @@ const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '
 const line = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const shorten = (value, max) => (line(value).length > max ? `${line(value).slice(0, max - 1).trimEnd()}…` : line(value));
 const KINDS = { commonalities: 'Gemeinsamkeiten', contradictions: 'Widersprüche', questions: 'Offene Fragen' };
-const dateOf = (date) => new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+const DATE = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const dateOf = (date) => DATE.format(date);
 
 // Der Titel ist oft gekürzt; eine kurze Frage im Wortlaut ist vollständiger.
 export const questionText = (idea) => line(/\?\s*$/.test(idea.input ?? '') && idea.input.length <= 400 ? idea.input : idea.title);
