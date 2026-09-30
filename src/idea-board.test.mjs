@@ -114,12 +114,16 @@ test('a kept text note stays verbatim, keeps line breaks and is not read as a li
   assert.equal(JSON.parse(readFileSync(board.path, 'utf8')).ideas[1].input, captured.idea.input);
 });
 
-test('text notes allow longer input than plain notes', async () => {
+test('every non-link capture is a text note with the long text limit; old notes still load', async () => {
   const board = makeBoard();
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), /als Textnotiz/);
-  const kept = await board.execute({ type: 'capture', input: 'x'.repeat(12_001), keep: true });
-  assert.equal(kept.idea.input.length, 12_001);
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep: true }), /60000/);
+  const plain = await board.execute({ type: 'capture', input: 'x'.repeat(12_001) });
+  assert.equal(plain.idea.source, 'text');
+  assert.equal(plain.idea.input.length, 12_001);
+  for (const keep of [false, true]) {
+    await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001), keep }), /60000/);
+  }
+  await board.importState({ version: 1, ideas: [{ id: 'alt', title: 'Alte Notiz', input: 'Alte Notiz', source: 'note', analysisState: 'ready' }] });
+  assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'alt').source, 'note');
 });
 
 test('an unreadable link stays saved with a retryable failure', async () => {
@@ -140,7 +144,7 @@ test('an unreadable link stays saved with a retryable failure', async () => {
 
 test('invalid and oversized commands are rejected', async () => {
   const board = makeBoard();
-  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(12_001) }), IdeaBoardValidationError);
+  await assert.rejects(() => board.execute({ type: 'capture', input: 'x'.repeat(60_001) }), IdeaBoardValidationError);
   await assert.rejects(() => board.execute({ type: 'launch' }), /unsupported command/);
   for (const type of ['constructor', 'toString', '__proto__', 5]) await assert.rejects(() => board.execute({ type }), /unsupported command/);
   for (const command of [null, [], 'capture']) await assert.rejects(() => board.execute(command), /command must be an object/);
@@ -281,7 +285,7 @@ test('switching to the same file in other letter case keeps the collection on Wi
 test('small input slips: unparseable links stay text, renaming ignores trashed spellings, moves store the parent id', async () => {
   const board = makeBoard();
   const broken = await board.execute({ type: 'capture', input: 'http://[' });
-  assert.notEqual(broken.idea.source, 'link');
+  assert.equal(broken.idea.source, 'text');
   assert.equal(broken.idea.url, null);
 
   const kept = (await board.execute({ type: 'capture', input: 'Behalten' })).idea;

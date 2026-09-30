@@ -6,7 +6,6 @@ import { REFLECTION_KINDS, reflectionSources, validateReflection } from './refle
 import { researchSource, validateResearch, validSources, webUrl } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
 
-const MAX_INPUT = 12_000;
 const MAX_TEXT = 60_000;
 const MAX_TAGS = 12;
 const MAX_TAG_LENGTH = 40;
@@ -235,14 +234,11 @@ export class IdeaBoard {
   }
 
   async #capture(command) {
+    // keep bewahrt einen Link als Text auf; alles andere außer Links ist ohnehin Text.
     const keep = command.keep === true;
-    const raw = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
-    const input = raw;
+    const input = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
     if (!input) throw new IdeaBoardValidationError('Bitte eine Notiz, einen Text oder einen Link eingeben.');
-    if (keep && input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Textnotiz überschreitet ${MAX_TEXT} Zeichen.`);
-    if (!keep && input.length > MAX_INPUT) {
-      throw new IdeaBoardValidationError(`Eingabe überschreitet ${MAX_INPUT} Zeichen. Längere Texte als Textnotiz aufbewahren.`);
-    }
+    if (input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Text überschreitet ${MAX_TEXT} Zeichen.`);
 
     const state = this.#read();
     const room = command.roomId ? this.#room(state, command.roomId) : null;
@@ -258,7 +254,8 @@ export class IdeaBoard {
       topic: parent?.topic ?? clean(command.topic, 'Unsortiert').slice(0, 80),
       // Schlagwörter (keywords) sind Vorschläge der Analyse; tags bestätigt der Mensch.
       tags: [],
-      source: isLink ? 'link' : keep ? 'text' : 'note',
+      // Ältere Gedanken können noch source 'note' tragen; neue sind 'link' oder 'text'.
+      source: isLink ? 'link' : 'text',
       url: isLink ? input : null,
       input,
       createdAt,
