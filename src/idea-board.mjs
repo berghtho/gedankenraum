@@ -55,6 +55,8 @@ function normalizedAnalysis(value, fallbackTitle) {
 }
 
 const emptyState = () => ({ version: 1, ideas: [] });
+// Windows-Dateinamen unterscheiden keine Groß- und Kleinschreibung.
+const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -779,7 +781,7 @@ export class IdeaBoard {
   }
 
   #switchStorage(path, mode) {
-    if (path === this.path) return { ...this.snapshot(), created: false, action: 'unchanged' };
+    if (samePath(path, this.path)) return { ...this.snapshot(), created: false, action: 'unchanged' };
     const created = !existsSync(path);
     const current = this.#read();
     let state = current;

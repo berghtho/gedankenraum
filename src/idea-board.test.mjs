@@ -265,3 +265,13 @@ test('imported unfinished analysis waits for an explicit retry, also when mergin
   assert.equal(calls, 1);
   assert.equal(board.snapshot().ideas.find((idea) => idea.id === 'extern').analysisState, 'failed');
 });
+
+test('switching to the same file in other letter case keeps the collection on Windows', { skip: process.platform !== 'win32' }, async () => {
+  const board = makeBoard();
+  await captureAnalyzed(board, { type: 'capture', input: 'Bleibt' });
+  const path = board.path;
+  const switched = await board.switchStorage(path.toUpperCase());
+  assert.equal(switched.action, 'unchanged');
+  assert.equal(switched.canUndo, true);
+  assert.equal(board.path, path);
+});
