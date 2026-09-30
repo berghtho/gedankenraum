@@ -61,6 +61,12 @@ const fileKey = (path, stats) => `${path}|${stats.ino}:${stats.mtimeMs}:${stats.
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+// Bei doppelten IDs gilt wie bei find() der erste Eintrag.
+const byId = (items = []) => {
+  const map = new Map();
+  for (const item of items) if (!map.has(item.id)) map.set(item.id, item);
+  return map;
+};
 const mergeById = (current = [], incoming = []) => {
   const known = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => { if (known.has(item.id)) return false; known.add(item.id); return true; })];
@@ -254,8 +260,10 @@ export class IdeaBoard {
   #remember(before, after, commandType) {
     const patches = [];
     const undoFields = ['mergeTags', 'renametag'].includes(commandType) ? [...USER_FIELDS, 'keywords'] : USER_FIELDS;
+    const previousIdeas = byId(before.ideas);
+    const previousRooms = byId(before.rooms);
     for (const idea of after.ideas) {
-      const previous = before.ideas.find((item) => item.id === idea.id);
+      const previous = previousIdeas.get(idea.id);
       if (!previous) { patches.push({ id: idea.id, captured: true }); continue; }
       const fields = undoFields.filter((key) => !equal(previous[key], idea[key]));
       if (fields.length) patches.push({
@@ -264,7 +272,7 @@ export class IdeaBoard {
       });
     }
     for (const room of after.rooms ?? []) {
-      const previous = (before.rooms ?? []).find((item) => item.id === room.id);
+      const previous = previousRooms.get(room.id);
       if (!previous) { patches.push({ id: room.id, collection: 'rooms', captured: true }); continue; }
       const fields = ['question', 'ideaIds', 'archivedAt'].filter((key) => !equal(previous[key], room[key]));
       if (fields.length) patches.push({ id: room.id, collection: 'rooms', fields: fields.map((key) => ({ key, before: previous[key], after: room[key] })) });
