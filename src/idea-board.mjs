@@ -57,6 +57,7 @@ function normalizedAnalysis(value, fallbackTitle) {
 const emptyState = () => ({ version: 1, ideas: [] });
 // Windows-Dateinamen unterscheiden keine Groß- und Kleinschreibung.
 const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+const fileKey = (path, stats) => `${path}|${stats.ino}:${stats.mtimeMs}:${stats.size}`;
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -118,6 +119,7 @@ export class IdeaBoard {
     this.researching = null;
     this.generation = 0;
     this.writes = 0;
+    this.cache = null;
     this.stopped = false;
   }
 
@@ -132,12 +134,12 @@ export class IdeaBoard {
   }
 
   snapshot() {
-    const state = this.#read();
-    const ideas = state.ideas;
+    const revision = this.revision();
+    const state = this.#peek();
     return {
-      revision: this.revision(),
-      ideas: structuredClone(ideas.filter((idea) => !idea.deletedAt)),
-      trash: structuredClone(ideas.filter((idea) => idea.deletedAt)),
+      revision,
+      ideas: structuredClone(state.ideas.filter((idea) => !idea.deletedAt)),
+      trash: structuredClone(state.ideas.filter((idea) => idea.deletedAt)),
       canUndo: this.history.length > 0,
       rooms: structuredClone(state.rooms ?? []),
       reflections: structuredClone(state.reflections ?? []),
@@ -146,9 +148,9 @@ export class IdeaBoard {
 
   execute(command) {
     return this.#enqueue(async () => {
-      const before = this.#read();
+      const before = this.#peek();
       const result = await this.#execute(command);
-      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#read(), command.type);
+      if (!['undo', 'retry', 'reflect', 'retryReflection', 'research', 'reanalyzeAll', 'cancelReanalysis'].includes(command.type)) this.#remember(before, this.#peek(), command.type);
       return { ...result, ...this.snapshot() };
     }).then((result) => { this.resumeAnalysis(); return result; });
   }
@@ -333,9 +335,9 @@ export class IdeaBoard {
   async #analyzePending() {
     while (!this.stopped) {
       await this.pending;
-      const state = this.#read();
+      const state = this.#peek();
       const reflection = (state.reflections ?? []).find((item) => item.status === 'pending');
-      if (reflection) { await this.#analyzeReflection(reflection); continue; }
+      if (reflection) { await this.#analyzeReflection(structuredClone(reflection)); continue; }
       // Ein Gedanke in Recherche wartet, damit eine neue Analyse ihm nicht die recherchierte Quelle verändert.
       const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending' && item.id !== this.researching);
       if (!idea) return;
@@ -348,7 +350,7 @@ export class IdeaBoard {
     while (!this.stopped) {
       await this.pending;
       // Eine Recherche wartet nur auf die Analyse desselben Gedankens und baut auf ihrer Zusammenfassung auf.
-      const idea = this.#read().ideas.find((item) => !item.deletedAt && item.research?.status === 'pending' && item.analysisState !== 'pending');
+      const idea = this.#peek().ideas.find((item) => !item.deletedAt && item.research?.status === 'pending' && item.analysisState !== 'pending');
       if (!idea) return;
       this.researching = idea.id;
       try { await this.#runResearch(idea); } finally { this.researching = null; }
@@ -832,8 +834,18 @@ export class IdeaBoard {
     };
   }
 
+  // Die Datei wird nur neu gelesen und geprüft, wenn sie sich geändert hat. Der Zwischenstand wird nie verändert;
+  // wer ändern will, holt sich mit #read() eine eigene Kopie.
+  #peek() {
+    const stats = statSync(this.path, { throwIfNoEntry: false });
+    if (!stats) return emptyState();
+    const key = fileKey(this.path, stats);
+    if (this.cache?.key !== key) this.cache = { key, state: this.#readFrom(this.path) };
+    return this.cache.state;
+  }
+
   #read() {
-    return existsSync(this.path) ? this.#readFrom(this.path) : emptyState();
+    return structuredClone(this.#peek());
   }
 
   #readFrom(path) {
@@ -914,5 +926,9 @@ export class IdeaBoard {
 
   #write(state) {
     atomicReplaceText(this.path, `${JSON.stringify(state, null, 2)}\n`);
+    this.writes += 1;
+    const saved = structuredClone(state);
+    normalizeResearchIds(saved.ideas);
+    try { this.cache = { key: fileKey(this.path, statSync(this.path)), state: saved }; } catch { this.cache = null; }
   }
 }

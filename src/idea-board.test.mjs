@@ -296,3 +296,34 @@ test('small input slips: unparseable links stay text, renaming ignores trashed s
   const moved = await board.execute({ type: 'move', id: kept.id, parentId: `  ${broken.idea.id} ` });
   assert.equal(moved.idea.parentId, broken.idea.id);
 });
+
+test('an unchanged data file is not parsed again, copies stay independent and outside changes are read', async () => {
+  const board = makeBoard();
+  const captured = await captureAnalyzed(board, { type: 'capture', input: 'Einmal lesen' });
+  board.snapshot();
+  const parse = JSON.parse;
+  let parses = 0;
+  JSON.parse = (...args) => { parses += 1; return parse(...args); };
+  try {
+    board.snapshot();
+    await board.execute({ type: 'answer', id: captured.idea.id, answered: true });
+    await board.execute({ type: 'undo' });
+    await board.whenIdle();
+  } finally { JSON.parse = parse; }
+  assert.equal(parses, 0);
+
+  const first = board.snapshot();
+  first.ideas[0].title = 'Verändert';
+  first.ideas[0].tags.push('Leck');
+  assert.equal(board.snapshot().ideas[0].title, 'Tiefe Module');
+  assert.deepEqual(board.snapshot().ideas[0].tags, []);
+
+  const state = JSON.parse(readFileSync(board.path, 'utf8'));
+  state.ideas[0].title = 'Von außen';
+  writeFileSync(board.path, JSON.stringify(state));
+  assert.equal(board.snapshot().ideas[0].title, 'Von außen');
+  const revision = board.revision();
+  await board.execute({ type: 'retopic', id: captured.idea.id, topic: 'Neu' });
+  assert.notEqual(board.revision(), revision);
+  assert.equal(JSON.parse(readFileSync(board.path, 'utf8')).ideas[0].title, 'Von außen');
+});
