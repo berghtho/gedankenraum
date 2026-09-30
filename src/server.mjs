@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -14,6 +14,12 @@ import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
 
 const sourceHome = dirname(fileURLToPath(import.meta.url));
+const assetTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+// Nur diese Dateien werden ausgeliefert.
+const assets = new Map([
+  'index.html', 'app.mjs', 'mindmap.mjs', 'thinking-tools.mjs', 'workspace-ui.mjs', 'inline-thought.mjs', 'search.mjs',
+  'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'style.css',
+].map((name) => [name === 'index.html' ? '/' : `/${name}`, { path: join(sourceHome, name), type: assetTypes[extname(name)] }]));
 
 export function defaultAppDirectory(env = process.env, platform = process.platform) {
   const home = platform === 'win32' && env.LOCALAPPDATA
@@ -183,20 +189,6 @@ export function createGedankenraumServer({
   let expectedHost = null;
   let requestShutdown = () => {};
   let pushing = null;
-  const assets = new Map([
-    ['/', { path: join(sourceHome, 'index.html'), type: 'text/html; charset=utf-8' }],
-    ['/app.mjs', { path: join(sourceHome, 'app.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/mindmap.mjs', { path: join(sourceHome, 'mindmap.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/thinking-tools.mjs', { path: join(sourceHome, 'thinking-tools.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/workspace-ui.mjs', { path: join(sourceHome, 'workspace-ui.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/inline-thought.mjs', { path: join(sourceHome, 'inline-thought.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/search.mjs', { path: join(sourceHome, 'search.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/tag-match.mjs', { path: join(sourceHome, 'tag-match.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/tag-cleanup.mjs', { path: join(sourceHome, 'tag-cleanup.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/thought-kinds.mjs', { path: join(sourceHome, 'thought-kinds.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/room-summary.mjs', { path: join(sourceHome, 'room-summary.mjs'), type: 'text/javascript; charset=utf-8' }],
-    ['/style.css', { path: join(sourceHome, 'style.css'), type: 'text/css; charset=utf-8' }],
-  ]);
 
   const guard = (req) => {
     if (req.headers.origin !== expectedOrigin) return 'Anfrage stammt nicht aus Gedankenraum.';
@@ -204,6 +196,89 @@ export function createGedankenraumServer({
     if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] ?? '')) return 'JSON wird erwartet.';
     return null;
   };
+  const requireConfigurable = () => {
+    if (!storageConfigurable) throw new IdeaBoardValidationError('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
+  };
+
+  // auth: Origin, Token und JSON prüfen; check läuft vor dem Lesen des Bodys. Rückgabewert wird mit 200 gesendet,
+  // außer der Handler hat selbst geantwortet.
+  const routes = [
+    { method: 'GET', path: '/api/session', handler: () => ({ app: 'gedankenraum', token }) },
+    { method: 'GET', path: '/api/ideas', handler: ({ url, res }) => {
+      // Unverändert: kein Snapshot, der Client behält seinen Stand.
+      if (url.searchParams.get('since') !== board.revision()) return board.snapshot();
+      res.writeHead(204, { 'cache-control': 'no-store' });
+      res.end();
+    } },
+    { method: 'GET', path: '/api/ideas/status', handler: () => analyzer.status() },
+    { method: 'GET', path: '/api/storage', handler: () => ({
+      directory: dirname(board.path),
+      filePath: board.path,
+      configurable: storageConfigurable,
+      canBrowse: storageConfigurable && process.platform === 'win32',
+    }) },
+    { method: 'POST', path: '/api/storage/browse', auth: true, check: requireConfigurable, bodyLimit: 16 * 1024, handler: async ({ body }) => (
+      { directory: await selectDirectory(body.initialDirectory) }
+    ) },
+    { method: 'POST', path: '/api/storage', auth: true, check: requireConfigurable, bodyLimit: 16 * 1024, handler: async ({ body: { directory, mode }, res }) => {
+      if (typeof directory !== 'string' || !directory.trim() || !isAbsolute(directory.trim())) {
+        throw new IdeaBoardValidationError('Bitte einen vollständigen Ordnerpfad angeben.');
+      }
+      if (mode !== undefined && !['merge', 'replace'].includes(mode)) {
+        throw new IdeaBoardValidationError('Unbekannte Auswahl für die vorhandene Datendatei.');
+      }
+      const nextDirectory = resolve(directory.trim());
+      if (!existsSync(nextDirectory) || !statSync(nextDirectory).isDirectory()) {
+        throw new IdeaBoardValidationError('Der gewählte Ordner existiert nicht.');
+      }
+      const nextPath = join(nextDirectory, 'ideas.json');
+      const previousPath = board.path;
+      // Windows-Pfade unterscheiden nicht zwischen Groß- und Kleinschreibung.
+      const samePath = process.platform === 'win32' ? nextPath.toLowerCase() === previousPath.toLowerCase() : nextPath === previousPath;
+      if (!samePath && existsSync(nextPath) && !mode) {
+        return writeJson(res, 409, {
+          error: 'Am gewählten Speicherort existiert bereits eine ideas.json.',
+          requiresDecision: true,
+          filePath: nextPath,
+        });
+      }
+      // Erst die Einstellung, dann die Daten: Scheitert die Einstellung, ist die Zieldatei noch unberührt.
+      const previousSettings = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null;
+      writeStorageSettings(settingsPath, nextDirectory);
+      let result;
+      try {
+        result = await board.switchStorage(nextPath, mode ?? 'open');
+      } catch (error) {
+        try {
+          if (previousSettings === null) rmSync(settingsPath, { force: true });
+          else atomicReplaceText(settingsPath, previousSettings);
+        } catch { /* Beide Dateien bleiben erhalten; nur der Speicherort beim nächsten Start weicht ab. */ }
+        throw error;
+      }
+      return { ...result, directory: nextDirectory, filePath: board.path };
+    } },
+    { method: 'GET', path: '/api/git', handler: async () => ({ ...(await gitStatus(board.path)), update }) },
+    { method: 'POST', path: '/api/git/push', auth: true, bodyLimit: 16 * 1024, handler: () => {
+      if (pushing) throw new IdeaBoardValidationError('Push läuft bereits.');
+      pushing = commitAndPush(board.path).finally(() => { pushing = null; });
+      return pushing;
+    } },
+    { method: 'POST', path: '/api/ideas/execute', auth: true, bodyLimit: 256 * 1024, handler: ({ body }) => board.execute(body) },
+    { method: 'POST', path: '/api/tags/suggest', auth: true, bodyLimit: 16 * 1024, handler: () => {
+      if (!analyzer.suggestTagMerges) throw new IdeaBoardValidationError('Tag-Vorschläge sind nicht verfügbar.');
+      // Nur Tag-Namen und Häufigkeiten aus der Sammlung gehen an Codex, keine Gedanken.
+      const counts = new Map();
+      for (const idea of board.snapshot().ideas) for (const tag of idea.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      if (counts.size < 2) return { groups: [] };
+      const tags = [...counts].sort(([, left], [, right]) => right - left).map(([name, count]) => ({ name, count }));
+      return analyzer.suggestTagMerges({ tags });
+    } },
+    { method: 'POST', path: '/api/ideas/import', auth: true, bodyLimit: 10 * 1024 * 1024, handler: ({ body }) => board.importState(body) },
+    { method: 'POST', path: '/api/shutdown', auth: true, handler: ({ res }) => {
+      writeJson(res, 200, { stopped: true });
+      setImmediate(() => requestShutdown().catch(() => server.close()));
+    } },
+  ];
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, expectedOrigin ?? 'http://127.0.0.1');
@@ -211,114 +286,14 @@ export function createGedankenraumServer({
       if (!expectedHost || req.headers.host !== expectedHost) {
         return writeJson(res, 421, { error: 'Ungültiges lokales Ziel.' });
       }
-      if (req.method === 'GET' && url.pathname === '/api/session') {
-        return writeJson(res, 200, { app: 'gedankenraum', token });
-      }
-      if (req.method === 'GET' && url.pathname === '/api/ideas') {
-        // Unverändert: kein Snapshot, der Client behält seinen Stand.
-        if (url.searchParams.get('since') === board.revision()) {
-          res.writeHead(204, { 'cache-control': 'no-store' });
-          return res.end();
-        }
-        return writeJson(res, 200, board.snapshot());
-      }
-      if (req.method === 'GET' && url.pathname === '/api/ideas/status') {
-        return writeJson(res, 200, await analyzer.status());
-      }
-      if (req.method === 'GET' && url.pathname === '/api/storage') {
-        return writeJson(res, 200, {
-          directory: dirname(board.path),
-          filePath: board.path,
-          configurable: storageConfigurable,
-          canBrowse: storageConfigurable && process.platform === 'win32',
-        });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/storage/browse') {
-        const refusal = guard(req);
+      const route = routes.find((entry) => entry.method === req.method && entry.path === url.pathname);
+      if (route) {
+        const refusal = route.auth ? guard(req) : null;
         if (refusal) return writeJson(res, 403, { error: refusal });
-        if (!storageConfigurable) throw new IdeaBoardValidationError('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
-        const { initialDirectory } = await readBody(req);
-        return writeJson(res, 200, { directory: await selectDirectory(initialDirectory) });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/storage') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        if (!storageConfigurable) throw new IdeaBoardValidationError('Der Speicherort wird durch GEDANKENRAUM_HOME festgelegt.');
-        const { directory, mode } = await readBody(req);
-        if (typeof directory !== 'string' || !directory.trim() || !isAbsolute(directory.trim())) {
-          throw new IdeaBoardValidationError('Bitte einen vollständigen Ordnerpfad angeben.');
-        }
-        if (mode !== undefined && !['merge', 'replace'].includes(mode)) {
-          throw new IdeaBoardValidationError('Unbekannte Auswahl für die vorhandene Datendatei.');
-        }
-        const nextDirectory = resolve(directory.trim());
-        if (!existsSync(nextDirectory) || !statSync(nextDirectory).isDirectory()) {
-          throw new IdeaBoardValidationError('Der gewählte Ordner existiert nicht.');
-        }
-        const nextPath = join(nextDirectory, 'ideas.json');
-        const previousPath = board.path;
-        // Windows-Pfade unterscheiden nicht zwischen Groß- und Kleinschreibung.
-        const samePath = process.platform === 'win32' ? nextPath.toLowerCase() === previousPath.toLowerCase() : nextPath === previousPath;
-        if (!samePath && existsSync(nextPath) && !mode) {
-          return writeJson(res, 409, {
-            error: 'Am gewählten Speicherort existiert bereits eine ideas.json.',
-            requiresDecision: true,
-            filePath: nextPath,
-          });
-        }
-        // Erst die Einstellung, dann die Daten: Scheitert die Einstellung, ist die Zieldatei noch unberührt.
-        const previousSettings = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null;
-        writeStorageSettings(settingsPath, nextDirectory);
-        let result;
-        try {
-          result = await board.switchStorage(nextPath, mode ?? 'open');
-        } catch (error) {
-          try {
-            if (previousSettings === null) rmSync(settingsPath, { force: true });
-            else atomicReplaceText(settingsPath, previousSettings);
-          } catch { /* Beide Dateien bleiben erhalten; nur der Speicherort beim nächsten Start weicht ab. */ }
-          throw error;
-        }
-        return writeJson(res, 200, { ...result, directory: nextDirectory, filePath: board.path });
-      }
-      if (req.method === 'GET' && url.pathname === '/api/git') {
-        return writeJson(res, 200, { ...(await gitStatus(board.path)), update });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/git/push') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        await readBody(req);
-        if (pushing) throw new IdeaBoardValidationError('Push läuft bereits.');
-        pushing = commitAndPush(board.path).finally(() => { pushing = null; });
-        return writeJson(res, 200, await pushing);
-      }
-      if (req.method === 'POST' && url.pathname === '/api/ideas/execute') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        return writeJson(res, 200, await board.execute(await readBody(req, 256 * 1024)));
-      }
-      if (req.method === 'POST' && url.pathname === '/api/tags/suggest') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        await readBody(req);
-        if (!analyzer.suggestTagMerges) throw new IdeaBoardValidationError('Tag-Vorschläge sind nicht verfügbar.');
-        // Nur Tag-Namen und Häufigkeiten aus der Sammlung gehen an Codex, keine Gedanken.
-        const counts = new Map();
-        for (const idea of board.snapshot().ideas) for (const tag of idea.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
-        if (counts.size < 2) return writeJson(res, 200, { groups: [] });
-        const tags = [...counts].sort(([, left], [, right]) => right - left).map(([name, count]) => ({ name, count }));
-        return writeJson(res, 200, await analyzer.suggestTagMerges({ tags }));
-      }
-      if (req.method === 'POST' && url.pathname === '/api/ideas/import') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        return writeJson(res, 200, await board.importState(await readBody(req, 10 * 1024 * 1024)));
-      }
-      if (req.method === 'POST' && url.pathname === '/api/shutdown') {
-        const refusal = guard(req);
-        if (refusal) return writeJson(res, 403, { error: refusal });
-        writeJson(res, 200, { stopped: true });
-        setImmediate(() => requestShutdown().catch(() => server.close()));
+        route.check?.();
+        const body = route.bodyLimit ? await readBody(req, route.bodyLimit) : undefined;
+        const payload = await route.handler({ url, body, res });
+        if (!res.writableEnded) writeJson(res, 200, payload);
         return;
       }
       if (req.method === 'GET' && assets.has(url.pathname)) {
