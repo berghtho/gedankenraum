@@ -344,3 +344,27 @@ test('a failed storage switch leaves the target file and the saved location as t
     assert.equal(readFileSync(settingsPath, 'utf8'), settings);
   } finally { await broken.close(); }
 });
+
+test('polling with the known revision answers 204 without a body until the board changes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-since-'));
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), token: 'test-token', analyzer: createLocalAnalyzer() });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+  const since = (revision) => fetch(`${origin}/api/ideas?since=${encodeURIComponent(revision)}`);
+  try {
+    const { revision } = await fetch(`${origin}/api/ideas`).then((response) => response.json());
+    const unchanged = await since(revision);
+    assert.equal(unchanged.status, 204);
+    assert.equal(await unchanged.text(), '');
+    assert.equal((await since('veraltet')).status, 200);
+    await fetch(`${origin}/api/ideas/execute`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: JSON.stringify({ type: 'capture', input: 'Neu' }) });
+    const changed = await since(revision);
+    assert.equal(changed.status, 200);
+    const snapshot = await changed.json();
+    assert.notEqual(snapshot.revision, revision);
+    assert.equal(snapshot.ideas.length, 1);
+  } finally {
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});

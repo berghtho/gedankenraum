@@ -215,6 +215,11 @@ export function createGedankenraumServer({
         return writeJson(res, 200, { app: 'gedankenraum', token });
       }
       if (req.method === 'GET' && url.pathname === '/api/ideas') {
+        // Unverändert: kein Snapshot, der Client behält seinen Stand.
+        if (url.searchParams.get('since') === board.revision()) {
+          res.writeHead(204, { 'cache-control': 'no-store' });
+          return res.end();
+        }
         return writeJson(res, 200, board.snapshot());
       }
       if (req.method === 'GET' && url.pathname === '/api/ideas/status') {
