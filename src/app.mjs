@@ -299,6 +299,8 @@ export function initGedankenraum({ root, getToken }) {
   let mutationCount = 0;
   let epoch = 0;
   let pollTimer = null;
+  let polling = true;
+  let revision = null;
   let selectedId = null;
   let busy = false;
   let keep = false;
@@ -500,6 +502,7 @@ export function initGedankenraum({ root, getToken }) {
   const applySnapshot = (snapshot) => {
     if (!Array.isArray(snapshot.ideas)) return;
     clearTimeout(gitTimer); gitTimer = setTimeout(loadGit, 1000);
+    revision = snapshot.revision ?? null;
     ideas = snapshot.ideas;
     trash = snapshot.trash ?? [];
     canUndo = snapshot.canUndo ?? false;
@@ -975,6 +978,7 @@ export function initGedankenraum({ root, getToken }) {
     if (!window.confirm('Gedankenraum beenden?')) return;
     try {
       await post('/api/shutdown');
+      polling = false; clearTimeout(pollTimer); clearTimeout(gitTimer);
       document.body.innerHTML = '<div class="stopped"><b>Gedankenraum wurde beendet.</b><span>Dieser Tab kann geschlossen werden.</span></div>';
       window.close();
     } catch (error) {
@@ -1057,20 +1061,24 @@ export function initGedankenraum({ root, getToken }) {
     }
   });
 
+  // Gefragt wird nur, ob sich seit dem angezeigten Stand etwas geändert hat; 204 heißt unverändert.
   const refresh = async () => {
+    if (!polling) return;
     const started = epoch;
     try {
       if (!mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing() && !document.hidden) {
-        const response = await fetch('/api/ideas');
-        const next = await response.json();
-        if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
-        if (started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing()
-          && JSON.stringify(next) !== JSON.stringify({ ideas, trash, canUndo, rooms, reflections })) {
-          applySnapshot(next); render();
+        const response = await fetch(revision ? `/api/ideas?since=${encodeURIComponent(revision)}` : '/api/ideas');
+        if (response.status !== 204) {
+          const next = await response.json();
+          if (!response.ok) throw new Error(next.error ?? 'Sammlung konnte nicht aktualisiert werden.');
+          if (polling && started === epoch && !mutationCount && !thinking.isInteracting() && !spaces.isEditing() && !inline.isEditing()
+            && next.revision !== revision) {
+            applySnapshot(next); render();
+          }
         }
       }
     } catch { /* Keep locally displayed data and unsaved dialog input while offline. */ }
-    pollTimer = setTimeout(refresh, 1200);
+    if (polling) pollTimer = setTimeout(refresh, 1200);
   };
   window.addEventListener('pagehide', () => clearTimeout(pollTimer));
   return {
