@@ -275,3 +275,24 @@ test('switching to the same file in other letter case keeps the collection on Wi
   assert.equal(switched.canUndo, true);
   assert.equal(board.path, path);
 });
+
+test('small input slips: unparseable links stay text, renaming ignores trashed spellings, moves store the parent id', async () => {
+  const board = makeBoard();
+  const broken = await board.execute({ type: 'capture', input: 'http://[' });
+  assert.notEqual(broken.idea.source, 'link');
+  assert.equal(broken.idea.url, null);
+
+  const kept = (await board.execute({ type: 'capture', input: 'Behalten' })).idea;
+  const trashed = (await board.execute({ type: 'capture', input: 'Weg' })).idea;
+  await board.whenIdle();
+  await board.execute({ type: 'retag', id: kept.id, tags: ['Alt'] });
+  await board.execute({ type: 'retag', id: trashed.id, tags: ['Neu'] });
+  await board.execute({ type: 'delete', id: trashed.id });
+  const renamed = await board.execute({ type: 'renametag', from: 'Alt', to: 'neu' });
+  assert.equal(renamed.tag, 'neu');
+  assert.equal(renamed.merged, false);
+  assert.deepEqual(board.snapshot().ideas.find((idea) => idea.id === kept.id).tags, ['neu']);
+
+  const moved = await board.execute({ type: 'move', id: kept.id, parentId: `  ${broken.idea.id} ` });
+  assert.equal(moved.idea.parentId, broken.idea.id);
+});

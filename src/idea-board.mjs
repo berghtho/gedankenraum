@@ -222,7 +222,8 @@ export class IdeaBoard {
 
     const state = this.#read();
     const room = command.roomId ? this.#room(state, command.roomId) : null;
-    const isLink = !keep && /^https?:\/\/\S+$/i.test(input);
+    // Nicht lesbare Adressen wie „http://[“ bleiben Text.
+    const isLink = !keep && /^https?:\/\/\S+$/i.test(input) && !!webUrl(input);
     const parent = command.parentId ? this.#active(state, command.parentId) : null;
     const title = clean(command.title) || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
     const createdAt = this.now().toISOString();
@@ -700,14 +701,15 @@ export class IdeaBoard {
   #move(command) {
     const state = this.#read();
     const idea = this.#active(state, command.id);
-    let parent = command.parentId ? this.#active(state, command.parentId) : null;
+    const target = command.parentId ? this.#active(state, command.parentId) : null;
+    let parent = target;
     const visited = new Set([idea.id]);
     while (parent) {
       if (visited.has(parent.id)) throw new IdeaBoardValidationError('Ein Zweig kann nicht unter sich selbst liegen.');
       visited.add(parent.id);
       parent = state.ideas.find((item) => item.id === parent.parentId);
     }
-    idea.parentId = command.parentId || null;
+    idea.parentId = target?.id ?? null;
     idea.updatedAt = this.now().toISOString();
     this.#write(state);
     return { idea: structuredClone(idea) };
@@ -764,7 +766,7 @@ export class IdeaBoard {
     const to = cleanTag(command.to);
     if (!from || !to) throw new IdeaBoardValidationError('Tag darf nicht leer sein.');
     const state = this.#read();
-    const existing = state.ideas.flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
+    const existing = state.ideas.filter((idea) => !idea.deletedAt).flatMap(tagsOf).find((tag) => sameTag(tag, to) && tag !== from);
     const target = existing ?? to;
     const merged = !!existing && !sameTag(from, to);
     const changed = this.#replaceTags(state, [from], target);
