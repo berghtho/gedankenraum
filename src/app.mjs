@@ -475,8 +475,12 @@ export function initGedankenraum({ root, getToken }) {
     const pending = !!git?.available && (git.changed || git.ahead > 0);
     gitPush.hidden = !pending;
     if (!pending) return;
-    gitPush.textContent = git.changed ? 'PUSH · ideas.json geändert' : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen`;
-    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`;
+    // Push nimmt alle lokalen Commits des Branches mit, auch solche, die nicht von Gedankenraum stammen.
+    const foreign = git.foreign > 0 ? git.foreign : 0;
+    const others = `${foreign} fremde${foreign === 1 ? 'r' : ''} Commit${foreign === 1 ? '' : 's'}`;
+    gitPush.textContent = git.changed ? `PUSH · ideas.json geändert${foreign ? ` (+ ${others})` : ''}` : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen${foreign ? ` (${foreign} fremde)` : ''}`;
+    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`
+      + (foreign ? `. Dabei ${foreign === 1 ? 'wird' : 'werden'} auch ${others} gepusht, ${foreign === 1 ? 'der' : 'die'} nicht von Gedankenraum ${foreign === 1 ? 'stammt' : 'stammen'}.` : '');
   };
   const loadGit = async () => {
     clearTimeout(gitTimer);
