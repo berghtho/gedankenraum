@@ -1,5 +1,4 @@
-const TOPIC_COLORS = ['oklch(72% 0.05 120)', 'oklch(72% 0.05 60)', 'oklch(72% 0.05 230)', 'oklch(72% 0.05 300)', 'oklch(72% 0.05 160)', 'oklch(72% 0.05 20)', 'oklch(72% 0.05 90)'];
-import { layoutMindmap, mindmapMarkup, relationLabels } from './mindmap.mjs';
+import { layoutMindmap, mindmapMarkup, relationLabels, topicColor } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
@@ -363,10 +362,7 @@ export function initGedankenraum({ root, getToken }) {
     message.hidden = !text;
     if (text && !error) messageTimer = setTimeout(() => { message.hidden = true; }, 3500);
   };
-  const colorFor = (() => {
-    const order = () => [...new Set(ideas.map((idea) => idea.topic))];
-    return (topic) => TOPIC_COLORS[Math.max(0, order().indexOf(topic)) % TOPIC_COLORS.length];
-  })();
+  const colorFor = topicColor;
   const parseQuery = (raw) => {
     // "#tag" und "thema:Name" in der Suche wirken wie die Leiste links.
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
