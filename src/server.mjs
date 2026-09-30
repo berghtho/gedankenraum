@@ -10,7 +10,7 @@ import { execFile, spawn } from 'node:child_process';
 import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
 import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
-import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
+import { IdeaBoard, IdeaBoardValidationError, samePath } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
 import { byUse, tagCounts } from './util.mjs';
 
@@ -241,8 +241,7 @@ export function createGedankenraumServer({
       const nextPath = join(nextDirectory, 'ideas.json');
       const previousPath = board.path;
       // Windows-Pfade unterscheiden nicht zwischen Groß- und Kleinschreibung.
-      const samePath = process.platform === 'win32' ? nextPath.toLowerCase() === previousPath.toLowerCase() : nextPath === previousPath;
-      if (!samePath && existsSync(nextPath) && !mode) {
+      if (!samePath(nextPath, previousPath) && existsSync(nextPath) && !mode) {
         return writeJson(res, 409, {
           error: 'Am gewählten Speicherort existiert bereits eine ideas.json.',
           requiresDecision: true,

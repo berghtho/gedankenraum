@@ -17,6 +17,7 @@ const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
 // Formatierer einmal anlegen; je Zeile neu gebaut kosten sie beim Rendern spürbar.
+const DATE = new Intl.DateTimeFormat('de-DE');
 const DAY_MONTH = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short' });
 const DAY_MONTH_YEAR = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
 const relativeDate = (value) => {
@@ -114,7 +115,7 @@ function listMarkup(ideas, selectedId, terms, roomIds) {
   })).join('')}</div>`;
 }
 
-function timelineMarkup(ideas, selectedId, colorFor, terms, roomIds) {
+function timelineMarkup(ideas, selectedId, terms, roomIds) {
   const sorted = [...ideas].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const days = new Map();
   for (const idea of sorted) {
@@ -125,7 +126,7 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, roomIds) {
   return [...days].map(([label, entries]) => `<div class="ib-day">
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
-      color: colorFor(idea.topic), terms, tags: true,
+      color: topicColor(idea.topic), terms, tags: true,
       meta: [outsideRoom(idea, roomIds) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
     })).join('')}</div>
   </div>`).join('');
@@ -137,7 +138,7 @@ const railSection = (key, title, count, items, collapsed) => `<section class="ib
   <div class="ib-rail-items" id="rail-${key}"${collapsed ? ' hidden' : ''}>${items}</div>
 </section>`;
 
-function railMarkup(ideas, filter, colorFor, collapsed) {
+function railMarkup(ideas, filter, collapsed) {
   const topicCount = new Map();
   for (const idea of ideas) topicCount.set(idea.topic, (topicCount.get(idea.topic) ?? 0) + 1);
   const tags = [...tagCounts(ideas)].sort(([leftTag, leftCount], [rightTag, rightCount]) => rightCount - leftCount || leftTag.localeCompare(rightTag, 'de'));
@@ -149,7 +150,7 @@ function railMarkup(ideas, filter, colorFor, collapsed) {
     </div>`;
   }).join('') + (tags.length > 1 ? '<button class="ib-rail-action" type="button" data-tags-cleanup>Tags aufräumen …</button>' : '') : '<div class="ib-rail-empty">Noch keine Tags. Vorschläge erscheinen unter „Mehr“ in einem Gedanken.</div>';
   const topicItems = [...topicCount].map(([topic, count]) => `<div class="ib-rail-item${filter.topic === topic ? ' is-active' : ''}">
-    <button type="button" data-idea-topic-filter="${html(topic)}"><span class="ib-topic-dot" style="background:${colorFor(topic)}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${count}</span></button>
+    <button type="button" data-idea-topic-filter="${html(topic)}"><span class="ib-topic-dot" style="background:${topicColor(topic)}"></span><span class="ib-rail-name">${html(topic)}</span><span class="ib-rail-n">${count}</span></button>
   </div>`).join('');
   // Offene Fragen im Blick behalten: im Raum zählen nur seine Fragen.
   const questions = ideas.filter(isQuestion);
@@ -179,14 +180,14 @@ function tagEditorMarkup(idea) {
   return `<span class="ib-meta-tags">${chips.join('')}${suggestions.join('')}${all}<button class="ib-tag-add" type="button" data-idea-tag-new>+ TAG</button></span>`;
 }
 
-function relatedMarkup(idea, ideas, colorFor) {
+function relatedMarkup(idea, ideas) {
   const own = new Set(tagsOf(idea).map(lower));
   if (!own.size) return '';
   const related = ideas.filter((other) => other.id !== idea.id && tagsOf(other).some((tag) => own.has(lower(tag)))).slice(0, 4);
   if (!related.length) return '';
   return `<div class="ib-related"><span class="ib-detail-label">VERWANDT ÜBER TAGS</span><div class="ib-related-rows">${related.map((other) => {
     const via = tagsOf(other).find((tag) => own.has(lower(tag)));
-    return `<button class="ib-related-row" type="button" data-related-open="${html(other.id)}"><span class="ib-topic-dot" style="background:${colorFor(other.topic)}"></span><span class="ib-rail-name">${html(other.title)}</span><span class="ib-rail-n">#${html(via)}</span></button>`;
+    return `<button class="ib-related-row" type="button" data-related-open="${html(other.id)}"><span class="ib-topic-dot" style="background:${topicColor(other.topic)}"></span><span class="ib-rail-name">${html(other.title)}</span><span class="ib-rail-n">#${html(via)}</span></button>`;
   }).join('')}</div></div>`;
 }
 
@@ -232,10 +233,10 @@ function panelHeadMarkup(idea) {
 }
 
 // Der Gedanke steht zuerst in eigenen Worten; Einordnung und Werkzeuge liegen unter „Mehr“.
-function detailMarkup(idea, ideas, colorFor, terms) {
+function detailMarkup(idea, ideas, terms) {
   if (!idea) return '';
   const mark = (value) => markText(value, terms, html);
-  const date = new Date(idea.createdAt).toLocaleDateString('de-DE');
+  const date = DATE.format(new Date(idea.createdAt));
   const link = idea.source === 'link';
   const paragraphs = link ? (idea.summary ? [idea.summary] : []) : paragraphsOf(idea);
   const showTitle = link || !startsWithTitle(idea.input ?? '', idea.title);
@@ -258,7 +259,7 @@ function detailMarkup(idea, ideas, colorFor, terms) {
     ${showTitle ? `<h3 class="ib-detail-title" tabindex="-1" data-detail-focus>${mark(idea.title)}</h3>` : ''}
     ${url}
     <div class="ib-detail-meta">
-      <button class="ib-meta-topic" type="button" data-idea-topic-filter="${html(idea.topic)}" title="Nach Thema filtern"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}</button>
+      <button class="ib-meta-topic" type="button" data-idea-topic-filter="${html(idea.topic)}" title="Nach Thema filtern"><span class="ib-topic-dot" style="background:${topicColor(idea.topic)}"></span>${html(idea.topic)}</button>
       ${tagsOf(idea).map((tag) => `<button class="ib-tag-chip" type="button" data-idea-tag-filter="${html(tag)}" title="Nach #${html(tag)} filtern">#${html(tag)}</button>`).join('')}
       ${copy}
     </div>
@@ -267,10 +268,10 @@ function detailMarkup(idea, ideas, colorFor, terms) {
     ${idea.researchOrigin ? `<div class="ib-origin-sources"><span class="ib-detail-label">QUELLEN</span>${sourceLinks(idea.researchOrigin.sources ?? [])}</div>` : ''}
     ${link ? points + notes : notes + points + summary}
     ${researchMarkup(idea, ideas)}
-    ${relatedMarkup(idea, ideas, colorFor)}
+    ${relatedMarkup(idea, ideas)}
     <details class="ib-organize"><summary>Mehr${connections ? ` · ${connections} Verbindung${connections === 1 ? '' : 'en'}` : ''}</summary>
       <div class="ib-meta-grid">
-        <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${colorFor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
+        <span class="ib-detail-label">THEMA</span><span class="ib-meta-topic"><span class="ib-topic-dot" style="background:${topicColor(idea.topic)}"></span>${html(idea.topic)}<button type="button" data-idea-topic>ÄNDERN</button></span>
         <span class="ib-detail-label">TAGS</span>${tagEditorMarkup(idea)}
         <span class="ib-detail-label">ANALYSE</span><span>${html(idea.engine)} · ${html(date)}</span>
       </div>
@@ -338,7 +339,6 @@ export function initGedankenraum({ root, getToken }) {
     message.hidden = !text;
     if (text && !error) messageTimer = setTimeout(() => { message.hidden = true; }, 3500);
   };
-  const colorFor = topicColor;
   const parseQuery = (raw) => {
     // "#tag" und "thema:Name" in der Suche wirken wie die Leiste links.
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
@@ -421,7 +421,7 @@ export function initGedankenraum({ root, getToken }) {
     if (railInputs.some((value, index) => value !== railKey[index])) {
       railKey = railInputs;
       rail.innerHTML = railSection('rooms', 'ARBEITSRÄUME', rooms.filter((item) => !item.archivedAt).length, spaces.railItems(), collapsedRail.has('rooms'))
-        + railMarkup(spaces.contextIdeas(ideas), filter, colorFor, collapsedRail);
+        + railMarkup(spaces.contextIdeas(ideas), filter, collapsedRail);
     }
     q('[data-undo]').disabled = !canUndo;
     const refreshing = ideas.filter((item) => item.reanalyze && item.analysisState === 'pending').length;
@@ -430,12 +430,12 @@ export function initGedankenraum({ root, getToken }) {
     const hasFilter = !!(filter.tag || filter.topic || filter.question || filter.query);
     const outside = roomIds ? visible.filter((candidate) => outsideRoom(candidate, roomIds)).length : 0;
     let body;
-    if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
+    if (view === 'tree') body = mindmapMarkup(visible, selectedId, thinking.mapState);
     else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, room, filter.query);
-    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, roomIds);
+    else if (view === 'time') body = timelineMarkup(visible, selectedId, terms, roomIds);
     else body = listMarkup(visible, selectedId, terms, roomIds);
     map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, outside) : '') + body;
-    detail.innerHTML = panelHeadMarkup(idea) + detailMarkup(idea, ideas, colorFor, terms);
+    detail.innerHTML = panelHeadMarkup(idea) + detailMarkup(idea, ideas, terms);
     const announce = hasFilter ? (visible.length ? `${visible.length} Treffer` : 'Nichts gefunden') : '';
     if (searchStatus.textContent !== announce) searchStatus.textContent = announce;
     captureInput.placeholder = room ? `Gedanke zu „${shorten(room.question, 40)}“ …` : CAPTURE_PLACEHOLDER;

@@ -66,7 +66,7 @@ export function layoutMindmap(ideas, collapsed = new Set()) {
   return { nodes, edges, parents, width: Math.max(600, ...nodes.map((node) => node.x + 288)), height: Math.max(380, row * 112 + 64) };
 }
 
-export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) {
+export function mindmapMarkup(ideas, selectedId, { collapsed, zoom }) {
   const layout = layoutMindmap(ideas, collapsed);
   const positions = new Map(layout.nodes.map((node) => [node.idea.id, node]));
   const links = layout.edges.map(({ from, to, derived }) => `<path${derived ? ' class="ib-mm-derived"' : ''} d="M${from.x + 248},${from.y + 42} C${from.x + 278},${from.y + 42} ${to.x - 30},${to.y + 42} ${to.x},${to.y + 42}"/>`);
@@ -86,7 +86,7 @@ export function mindmapMarkup(ideas, selectedId, colorFor, { collapsed, zoom }) 
     <div class="ib-mm-size" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
       <div class="ib-mm-canvas" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
         <svg class="ib-mm-lines" width="${layout.width}" height="${layout.height}" aria-hidden="true"><defs><marker id="mm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8"/></marker></defs>${links.join('')}</svg>
-        ${layout.nodes.map(({ idea, x, y, children }) => `<div class="ib-mm-node${idea.id === selectedId ? ' is-selected' : ''}${isDerived(idea) ? ' is-derived' : ''}" style="left:${x}px;top:${y}px;--node-color:${colorFor(idea.topic)}" data-mm-id="${html(idea.id)}">
+        ${layout.nodes.map(({ idea, x, y, children }) => `<div class="ib-mm-node${idea.id === selectedId ? ' is-selected' : ''}${isDerived(idea) ? ' is-derived' : ''}" style="left:${x}px;top:${y}px;--node-color:${topicColor(idea.topic)}" data-mm-id="${html(idea.id)}">
           <button class="ib-mm-select" type="button" data-idea-id="${html(idea.id)}" aria-label="${html(idea.title)}"><span>${html(idea.topic)}</span><b>${html(idea.title)}</b>${idea.analysisState === 'pending' ? '<i>Analyse läuft …</i>' : ''}</button>
           ${children ? `<button class="ib-mm-collapse" type="button" data-mm-collapse="${html(idea.id)}" aria-expanded="${!collapsed.has(idea.id)}" aria-label="Zweig ${collapsed.has(idea.id) ? 'ausklappen' : 'einklappen'}">${collapsed.has(idea.id) ? '+' : '−'} ${children}</button>` : ''}
         </div>`).join('')}

@@ -50,7 +50,7 @@ function normalizedAnalysis(value, fallbackTitle) {
 
 const emptyState = () => ({ version: 1, ideas: [] });
 // Windows-Dateinamen unterscheiden keine Groß- und Kleinschreibung.
-const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+export const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 const fileKey = (path, stats) => `${path}|${stats.ino}:${stats.mtimeMs}:${stats.size}`;
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
 const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];

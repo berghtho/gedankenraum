@@ -1,6 +1,9 @@
 import { digestFileName, digestMarkdown, digestMarkup, digestOutline, roomDigest } from './room-summary.mjs';
 import { html, REFLECTION_KINDS } from './util.mjs';
 
+// Wie toLocaleString('de-DE'), aber einmal gebaut statt je Auswertung.
+const DATE_TIME = new Intl.DateTimeFormat('de-DE', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+
 const saveText = (text, name) => {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
@@ -82,7 +85,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
   const resultMarkup = (result, { byId, accepted }) => {
     const sourceById = new Map(result.sources.map((source) => [source.id, source]));
     const changed = result.sources.some((source) => !byId.has(source.id) || (byId.get(source.id).updatedAt ?? null) !== source.updatedAt);
-    return `<article class="ib-reflection"><header><span>${html(REFLECTION_KINDS[result.kind])}</span><time>${html(new Date(result.createdAt).toLocaleString('de-DE'))}</time></header>
+    return `<article class="ib-reflection"><header><span>${html(REFLECTION_KINDS[result.kind])}</span><time>${html(DATE_TIME.format(new Date(result.createdAt)))}</time></header>
       ${result.question ? `<h3>${html(result.question)}</h3>` : ''}
       <p class="ib-reflection-label">KI-VORSCHLÄGE · ${result.sources.length} GEDANKEN${result.engine ? ` · ${html(result.engine)}` : ''}</p>
       ${changed ? '<p class="ib-reflection-warning">Quellen inzwischen geändert oder im Papierkorb. Die Auswertung bezieht sich auf den gespeicherten Stand.</p>' : ''}
