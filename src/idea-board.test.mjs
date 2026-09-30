@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -61,6 +61,18 @@ test('the revision changes with every write and with external replacement, but n
   state.ideas[0].notes = 'von außen';
   writeFileSync(board.path, JSON.stringify(state));
   assert.notEqual(board.revision(), afterAnswer);
+  // Eine wiederhergestellte Datei mit gleicher Größe und Zeit ist trotzdem eine andere.
+  const stamp = new Date('2026-09-01T10:00:00Z');
+  utimesSync(board.path, stamp, stamp);
+  const beforeRestore = board.revision();
+  state.ideas[0].notes = 'von Außen';
+  const replacement = `${board.path}.restore`;
+  writeFileSync(replacement, JSON.stringify(state));
+  assert.equal(statSync(replacement).size, statSync(board.path).size);
+  utimesSync(replacement, stamp, stamp);
+  renameSync(replacement, board.path);
+  assert.notEqual(board.revision(), beforeRestore);
+  assert.equal(board.snapshot().ideas[0].notes, 'von Außen');
 });
 
 test('manual tags and analysis keywords keep unrelated words that resemble plurals', async () => {

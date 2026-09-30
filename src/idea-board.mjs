@@ -127,8 +127,7 @@ export class IdeaBoard {
   // Ändert sich bei jedem eigenen Schreiben und wenn die Datei von außen ersetzt wird.
   revision() {
     try {
-      const { mtimeMs, size } = statSync(this.path);
-      return `${this.generation}:${this.writes}:${mtimeMs}:${size}`;
+      return `${this.generation}:${this.writes}:${fileKey(this.path, statSync(this.path))}`;
     } catch {
       return `${this.generation}:${this.writes}:-`;
     }
