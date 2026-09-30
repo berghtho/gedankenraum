@@ -309,3 +309,38 @@ test('choosing the current storage directory in other letter case is no conflict
     await new Promise((resolve) => app.server.close(resolve));
   }
 });
+
+test('a failed storage switch leaves the target file and the saved location as they were', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-switch-fail-'));
+  const target = mkdtempSync(join(tmpdir(), 'gedankenraum-switch-target-'));
+  const targetContent = `${JSON.stringify({ version: 1, ideas: [{ id: 'dort', title: 'Dort', input: 'Dort' }] })}\n`;
+  writeFileSync(join(target, 'ideas.json'), targetContent);
+  // Die Einstellungen lassen sich nicht schreiben: Ihr Ordner ist eine Datei.
+  writeFileSync(join(directory, 'blockiert'), '');
+  const start = async (settingsPath) => {
+    const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath, token: 'test-token', analyzer: createLocalAnalyzer(), storageConfigurable: true });
+    await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(origin);
+    const post = (path, body) => fetch(`${origin}${path}`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-gedankenraum-token': 'test-token' }, body: JSON.stringify(body) });
+    const close = async () => { app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve)); };
+    return { origin, post, close };
+  };
+  const blocked = await start(join(directory, 'blockiert', 'settings.json'));
+  try {
+    await blocked.post('/api/ideas/execute', { type: 'capture', input: 'Hier' });
+    const replaced = await blocked.post('/api/storage', { directory: target, mode: 'replace' });
+    assert.equal(replaced.status, 500);
+    assert.equal(readFileSync(join(target, 'ideas.json'), 'utf8'), targetContent);
+    assert.equal((await fetch(`${blocked.origin}/api/storage`).then((response) => response.json())).filePath, join(directory, 'ideas.json'));
+  } finally { await blocked.close(); }
+
+  const settingsPath = join(directory, 'settings.json');
+  const settings = `${JSON.stringify({ version: 1, directory })}\n`;
+  writeFileSync(settingsPath, settings);
+  writeFileSync(join(target, 'ideas.json'), 'kein JSON');
+  const broken = await start(settingsPath);
+  try {
+    assert.notEqual((await broken.post('/api/storage', { directory: target, mode: 'merge' })).status, 200);
+    assert.equal(readFileSync(settingsPath, 'utf8'), settings);
+  } finally { await broken.close(); }
+});

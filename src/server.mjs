@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
@@ -261,11 +261,17 @@ export function createGedankenraumServer({
             filePath: nextPath,
           });
         }
-        const result = await board.switchStorage(nextPath, mode ?? 'open');
+        // Erst die Einstellung, dann die Daten: Scheitert die Einstellung, ist die Zieldatei noch unberührt.
+        const previousSettings = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null;
+        writeStorageSettings(settingsPath, nextDirectory);
+        let result;
         try {
-          writeStorageSettings(settingsPath, nextDirectory);
+          result = await board.switchStorage(nextPath, mode ?? 'open');
         } catch (error) {
-          await board.switchStorage(previousPath);
+          try {
+            if (previousSettings === null) rmSync(settingsPath, { force: true });
+            else atomicReplaceText(settingsPath, previousSettings);
+          } catch { /* Beide Dateien bleiben erhalten; nur der Speicherort beim nächsten Start weicht ab. */ }
           throw error;
         }
         return writeJson(res, 200, { ...result, directory: nextDirectory, filePath: board.path });
