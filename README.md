@@ -50,6 +50,11 @@ Die vorhandene Sammlung bleibt im Format `version: 1`. Hierarchie, Verbindungen,
 Unter Windows genügt ein Doppelklick auf `Gedankenraum.cmd`. Die Anwendung startet und öffnet sich
 automatisch im Browser. Mit `BEENDEN` oben rechts wird der lokale Server wieder geschlossen.
 
+In T3 Code gibt es die Projektbefehle `Launch Gedankenraum` und `Stop Gedankenraum`
+in der oberen Leiste. Die Befehle stehen in `t3.json`. Stop verwendet die laufende
+Instanz, auch wenn sie auf einem anderen Port gestartet wurde; ohne laufende Instanz
+ist der Befehl ohne Wirkung.
+
 Alternativ:
 
 ```powershell

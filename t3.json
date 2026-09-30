@@ -1,0 +1,15 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Launch Gedankenraum",
+      "command": "npm start",
+      "icon": "play"
+    },
+    {
+      "name": "Stop Gedankenraum",
+      "command": "node src/stop.mjs",
+      "icon": "configure"
+    }
+  ]
+}
