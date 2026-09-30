@@ -7,6 +7,17 @@ export const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 export const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 
+// Als Link gilt nur http(s); alles andere bleibt Text.
+export const webUrl = (value) => {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+};
+export const isWebUrl = (value) => !!webUrl(String(value ?? '').trim());
+// Eine Eingabe ist ein Link, wenn sie allein aus einer lesbaren http(s)-Adresse besteht – im Browser wie im Server.
+export const isLinkInput = (value) => /^https?:\/\/\S+$/i.test(String(value ?? '').trim()) && isWebUrl(value);
+
 // Häufigkeit je Tag in Reihenfolge des ersten Auftretens; welche Gedanken zählen, entscheidet der Aufrufer.
 export const tagCounts = (ideas) => {
   const counts = new Map();

@@ -6,9 +6,9 @@ import { initTagCleanup } from './tag-cleanup.mjs';
 import { initStorageDialog } from './storage-ui.mjs';
 import { initGitPush } from './git-ui.mjs';
 import { initTagDialog } from './tag-dialog.mjs';
-import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
-import { html, lower, tagCounts, tagsOf } from './util.mjs';
+import { html, isLinkInput, isWebUrl, lower, tagCounts, tagsOf } from './util.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
 const RAIL_SECTIONS = ['rooms', 'questions', 'tags', 'topics'];
@@ -35,7 +35,6 @@ const dayLabel = (value) => {
   return (today.getFullYear() === date.getFullYear() ? DAY_MONTH : DAY_MONTH_YEAR).format(date).toUpperCase();
 };
 
-const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
 const sourceLabel = (source) => ({ link: 'LINK', text: 'TEXT' })[source] ?? 'NOTIZ';
 const kindLabel = (source) => (source === 'link' ? 'LINK' : 'NOTIZ');
 const questionLabel = (idea) => (isQuestion(idea) ? (idea.answeredAt ? 'Beantwortet' : 'Offene Frage') : null);
@@ -594,7 +593,7 @@ export function initGedankenraum({ root, getToken }) {
   // ein zweites Ablegen desselben Textes speichert ihn trotzdem neu.
   let duplicateInput = null;
   const handleDuplicate = async (input) => {
-    if (keep || !isLink(input) || duplicateInput === input) return false;
+    if (keep || !isLinkInput(input) || duplicateInput === input) return false;
     const key = linkKey(input);
     const existing = ideas.find((idea) => idea.source === 'link' && linkKey(idea.url) === key);
     const trashed = !existing && trash.some((idea) => idea.source === 'link' && linkKey(idea.url) === key);
@@ -627,7 +626,7 @@ export function initGedankenraum({ root, getToken }) {
     showMessage('');
     try {
       const room = spaces.currentRoom();
-      const result = await post('/api/ideas/execute', { type: 'capture', input, keep: keep || !isLink(input), roomId: spaces.roomId() });
+      const result = await post('/api/ideas/execute', { type: 'capture', input, keep: keep || !isLinkInput(input), roomId: spaces.roomId() });
       if (captureInput.value === submitted) captureInput.value = '';
       updateType();
       let text = room ? `Gespeichert in „${shorten(room.question, 40)}“.` : 'Gespeichert.';
@@ -645,9 +644,9 @@ export function initGedankenraum({ root, getToken }) {
     }
   };
   const updateType = () => {
-    typeLabel.hidden = !keep || !isLink(captureInput.value);
+    typeLabel.hidden = !keep || !isLinkInput(captureInput.value);
     if (keep) typeLabel.textContent = 'Link bleibt Text';
-    else typeLabel.textContent = isLink(captureInput.value) ? 'LINK ERKANNT' : 'NOTIZ ODER LINK';
+    else typeLabel.textContent = isLinkInput(captureInput.value) ? 'LINK ERKANNT' : 'NOTIZ ODER LINK';
   };
 
   captureInput.addEventListener('input', () => {

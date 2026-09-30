@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { byUse, compact, html, lower, REFLECTION_KINDS, tagCounts, tagsOf } from './util.mjs';
+import { byUse, compact, html, isLinkInput, lower, REFLECTION_KINDS, tagCounts, tagsOf, webUrl } from './util.mjs';
 import { REFLECTION_KINDS as reexported } from './reflection-analysis.mjs';
 
 test('html escapes markup characters and treats missing values as empty', () => {
@@ -29,4 +29,11 @@ test('tag counts keep first appearance, byUse puts most-used first and keeps tie
 test('reflection kinds have one source shared with the server', () => {
   assert.equal(reexported, REFLECTION_KINDS);
   assert.deepEqual(Object.keys(REFLECTION_KINDS), ['commonalities', 'contradictions', 'questions']);
+});
+
+test('browser and server share one rule for links', () => {
+  for (const value of ['https://example.org/a', ' http://example.org ']) assert.ok(isLinkInput(value), value);
+  for (const value of ['http://[', 'https://', 'javascript:alert(1)', 'https://example.org mit Text', 'Text https://example.org']) assert.ok(!isLinkInput(value), value);
+  assert.equal(webUrl('HTTPS://Example.org'), 'https://example.org/');
+  assert.equal(webUrl('javascript:alert(1)'), null);
 });

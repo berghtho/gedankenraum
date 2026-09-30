@@ -3,9 +3,9 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
-import { researchSource, validateResearch, validSources, webUrl } from './research-analysis.mjs';
+import { researchSource, validateResearch, validSources } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
-import { byUse, tagCounts, tagsOf } from './util.mjs';
+import { byUse, isLinkInput, tagCounts, tagsOf, webUrl } from './util.mjs';
 
 const MAX_TEXT = 60_000;
 const MAX_TAGS = 12;
@@ -240,7 +240,7 @@ export class IdeaBoard {
     const state = this.#read();
     const room = command.roomId ? this.#room(state, command.roomId) : null;
     // Nicht lesbare Adressen wie „http://[“ bleiben Text.
-    const isLink = !keep && /^https?:\/\/\S+$/i.test(input) && !!webUrl(input);
+    const isLink = !keep && isLinkInput(input);
     const parent = command.parentId ? this.#active(state, command.parentId) : null;
     const title = clean(command.title) || (isLink ? new URL(input).hostname : clean(input).slice(0, 90));
     const createdAt = this.now().toISOString();

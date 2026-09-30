@@ -1,6 +1,6 @@
-import { fold, hostOf, isWebUrl, linkKey } from './search.mjs';
+import { fold, hostOf, linkKey } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
-import { compact, html, REFLECTION_KINDS } from './util.mjs';
+import { compact, html, isWebUrl, REFLECTION_KINDS } from './util.mjs';
 
 const shorten = (value, max) => (compact(value).length > max ? `${compact(value).slice(0, max - 1).trimEnd()}…` : compact(value));
 const DATE = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fold, foldMap, hitsIn, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, windowAround } from './search.mjs';
+import { isWebUrl } from './util.mjs';
 
 test('link keys ignore protocol, www, trailing slash, anchors, tracking and YouTube variants', () => {
   const video = linkKey('https://www.youtube.com/watch?v=abc123&t=42s&si=xyz');

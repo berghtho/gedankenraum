@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { reflectionSources } from './reflection-analysis.mjs';
+import { webUrl } from './util.mjs';
 
 export const RESEARCH_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['summary', 'findings'],
@@ -37,13 +38,6 @@ export function researchPrompt({ source }) {
     'Antworte nur mit dem verlangten JSON-Objekt.',
   ].join('\n');
 }
-
-export const webUrl = (value) => {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
-  } catch { return null; }
-};
 
 // Nur http(s)-Quellen werden gespeichert; sie erscheinen später als Links im Gedanken.
 export function validSources(sources) {
