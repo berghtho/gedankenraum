@@ -1,7 +1,6 @@
 import { digestFileName, digestMarkdown, digestMarkup, digestOutline, roomDigest } from './room-summary.mjs';
+import { html, REFLECTION_KINDS } from './util.mjs';
 
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-const kinds = { commonalities: 'Gemeinsamkeiten', contradictions: 'Widersprüche', questions: 'Offene Fragen' };
 const saveText = (text, name) => {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
@@ -83,7 +82,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
   const resultMarkup = (result, { byId, accepted }) => {
     const sourceById = new Map(result.sources.map((source) => [source.id, source]));
     const changed = result.sources.some((source) => !byId.has(source.id) || (byId.get(source.id).updatedAt ?? null) !== source.updatedAt);
-    return `<article class="ib-reflection"><header><span>${html(kinds[result.kind])}</span><time>${html(new Date(result.createdAt).toLocaleString('de-DE'))}</time></header>
+    return `<article class="ib-reflection"><header><span>${html(REFLECTION_KINDS[result.kind])}</span><time>${html(new Date(result.createdAt).toLocaleString('de-DE'))}</time></header>
       ${result.question ? `<h3>${html(result.question)}</h3>` : ''}
       <p class="ib-reflection-label">KI-VORSCHLÄGE · ${result.sources.length} GEDANKEN${result.engine ? ` · ${html(result.engine)}` : ''}</p>
       ${changed ? '<p class="ib-reflection-warning">Quellen inzwischen geändert oder im Papierkorb. Die Auswertung bezieht sich auf den gespeicherten Stand.</p>' : ''}
@@ -188,7 +187,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
     if (target.closest('[data-selection-toggle]')) { if (!canNavigate()) return; selecting = !selecting; picked.clear(); if (selecting && selected()) picked.add(selected().id); render(); root.querySelector('[data-pick-id]')?.focus(); }
     if (target.closest('[data-reflection-open]')) {
       mode = 'reflect';
-      shell('Zusammen denken', `<p>${picked.size} Gedanken. Was möchtest du entdecken?</p><label class="ib-dialog-field"><span>Auswertung</span><select name="kind">${Object.entries(kinds).map(([id, name]) => `<option value="${id}">${html(name)}</option>`).join('')}</select></label><p class="ib-dialog-note">Die ausgewählten Texte werden an Codex übertragen. Ergebnisse bleiben Vorschläge.</p>`, 'Auswerten');
+      shell('Zusammen denken', `<p>${picked.size} Gedanken. Was möchtest du entdecken?</p><label class="ib-dialog-field"><span>Auswertung</span><select name="kind">${Object.entries(REFLECTION_KINDS).map(([id, name]) => `<option value="${id}">${html(name)}</option>`).join('')}</select></label><p class="ib-dialog-note">Die ausgewählten Texte werden an Codex übertragen. Ergebnisse bleiben Vorschläge.</p>`, 'Auswerten');
     }
     if (target.closest('[data-results-close]')) { closeResults(); root.querySelector('[data-reflection-open], [data-menu-open]')?.focus(); }
     if (target.closest('[data-workspace-close]')) dialog.close();

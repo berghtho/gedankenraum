@@ -257,7 +257,18 @@ test('HTTP capture returns persisted pending data while analysis waits; edits an
     assert.equal(deleted.trash.length, 1);
     const restored = await post({ type: 'undo' });
     assert.equal(restored.ideas[0].title, 'Mein Titel');
-    for (const asset of ['mindmap.mjs', 'thinking-tools.mjs', 'search.mjs', 'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
+    // Jedes Modul, das der Browser ab app.mjs importiert, muss ausgeliefert werden.
+    const pending = ['app.mjs'];
+    const served = new Set();
+    while (pending.length) {
+      const asset = pending.pop();
+      if (served.has(asset)) continue;
+      const response = await fetch(`${origin}/${asset}`);
+      assert.equal(response.status, 200, asset);
+      served.add(asset);
+      for (const [, name] of (await response.text()).matchAll(/from '\.\/([\w-]+\.mjs)'/g)) pending.push(name);
+    }
+    assert.ok(served.has('util.mjs'));
   } finally {
     release();
     app.server.closeAllConnections();

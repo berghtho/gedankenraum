@@ -1,4 +1,4 @@
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+import { html } from './util.mjs';
 
 // Drafts live outside rendered DOM so background snapshots cannot erase typing.
 export function initInlineThought({ root, command, render, reveal, notify, selected, parentOf = (idea) => idea.parentId ?? null }) {

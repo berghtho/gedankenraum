@@ -1,5 +1,5 @@
 import { relationLabels } from './mindmap.mjs';
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+import { html } from './util.mjs';
 
 export function connectionsMarkup(idea, ideas) {
   const byId = new Map(ideas.map((item) => [item.id, item]));

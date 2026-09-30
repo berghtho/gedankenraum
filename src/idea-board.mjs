@@ -5,6 +5,7 @@ import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
 import { researchSource, validateResearch, validSources, webUrl } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
+import { byUse, tagCounts, tagsOf } from './util.mjs';
 
 const MAX_TEXT = 60_000;
 const MAX_TAGS = 12;
@@ -31,14 +32,8 @@ function normalizedTags(value) {
   return tags;
 }
 
-const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
-
 // Häufig genutzte Tags zuerst: Sie gehen so an die Analyse und gewinnen bei Schreibvarianten.
-const knownTags = (state) => {
-  const counts = new Map();
-  for (const idea of state.ideas) if (!idea.deletedAt) for (const tag of tagsOf(idea)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
-  return [...counts].sort(([, left], [, right]) => right - left).map(([tag]) => tag);
-};
+const knownTags = (state) => byUse(tagCounts(state.ideas.filter((idea) => !idea.deletedAt))).map(([tag]) => tag);
 
 function normalizedAnalysis(value, fallbackTitle) {
   const title = clean(value?.title, fallbackTitle).slice(0, 160);

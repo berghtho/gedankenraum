@@ -12,13 +12,14 @@ import { createCodexAnalyzer } from './codex-analysis.mjs';
 import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
 import { IdeaBoard, IdeaBoardValidationError } from './idea-board.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
+import { byUse, tagCounts } from './util.mjs';
 
 const sourceHome = dirname(fileURLToPath(import.meta.url));
 const assetTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 // Nur diese Dateien werden ausgeliefert.
 const assets = new Map([
   'index.html', 'app.mjs', 'mindmap.mjs', 'thinking-tools.mjs', 'workspace-ui.mjs', 'inline-thought.mjs', 'search.mjs',
-  'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'style.css',
+  'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'util.mjs', 'style.css',
 ].map((name) => [name === 'index.html' ? '/' : `/${name}`, { path: join(sourceHome, name), type: assetTypes[extname(name)] }]));
 
 export function defaultAppDirectory(env = process.env, platform = process.platform) {
@@ -267,10 +268,9 @@ export function createGedankenraumServer({
     { method: 'POST', path: '/api/tags/suggest', auth: true, bodyLimit: 16 * 1024, handler: () => {
       if (!analyzer.suggestTagMerges) throw new IdeaBoardValidationError('Tag-Vorschläge sind nicht verfügbar.');
       // Nur Tag-Namen und Häufigkeiten aus der Sammlung gehen an Codex, keine Gedanken.
-      const counts = new Map();
-      for (const idea of board.snapshot().ideas) for (const tag of idea.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      const counts = tagCounts(board.snapshot().ideas);
       if (counts.size < 2) return { groups: [] };
-      const tags = [...counts].sort(([, left], [, right]) => right - left).map(([name, count]) => ({ name, count }));
+      const tags = byUse(counts).map(([name, count]) => ({ name, count }));
       return analyzer.suggestTagMerges({ tags });
     } },
     { method: 'POST', path: '/api/ideas/import', auth: true, bodyLimit: 10 * 1024 * 1024, handler: ({ body }) => board.importState(body) },

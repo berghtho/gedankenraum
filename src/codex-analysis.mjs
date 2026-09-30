@@ -10,6 +10,7 @@ import { createLocalAnalyzer } from './local-analysis.mjs';
 import { REFLECTION_SCHEMA, reflectionPrompt, validateReflection } from './reflection-analysis.mjs';
 import { RESEARCH_SCHEMA, researchPrompt, validateResearch } from './research-analysis.mjs';
 import { TAG_MERGE_SCHEMA, tagMergePrompt, validateTagMerges } from './tag-analysis.mjs';
+import { compact } from './util.mjs';
 
 const exec = promisify(execFile);
 const MODEL = 'gpt-6-sol';
@@ -34,7 +35,6 @@ const RESULT_SCHEMA = {
   },
 };
 
-const compact = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 
 function promptFor({ input, source, existingTopics, existingTags = [] }) {
   const boundary = `UNTRUSTED_SOURCE_${randomBytes(16).toString('hex')}`;

@@ -5,14 +5,12 @@ import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
+import { html, tagCounts, tagsOf } from './util.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
 const RAIL_SECTIONS = ['rooms', 'questions', 'tags', 'topics'];
 const CAPTURE_PLACEHOLDER = 'Ein Gedanke, ein Link, ein Anfang … ( n )';
 
-const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-})[char]);
 const lower = (value) => String(value ?? '').toLocaleLowerCase('de-DE');
 const shorten = (value, max) => (String(value ?? '').length > max ? `${String(value).slice(0, max - 1).trimEnd()}…` : String(value ?? ''));
 
@@ -38,7 +36,6 @@ const dayLabel = (value) => {
 const isLink = (value) => /^https?:\/\/\S+$/i.test(value.trim());
 const sourceLabel = (source) => ({ link: 'LINK', text: 'TEXT' })[source] ?? 'NOTIZ';
 const kindLabel = (source) => (source === 'link' ? 'LINK' : 'NOTIZ');
-const tagsOf = (idea) => Array.isArray(idea.tags) ? idea.tags : [];
 const questionLabel = (idea) => (isQuestion(idea) ? (idea.answeredAt ? 'Beantwortet' : 'Offene Frage') : null);
 const suggestionsOf = (idea) => {
   const have = new Set(tagsOf(idea).map(lower));
@@ -140,13 +137,9 @@ const railSection = (key, title, count, items, collapsed) => `<section class="ib
 </section>`;
 
 function railMarkup(ideas, filter, colorFor, collapsed) {
-  const tagCount = new Map();
   const topicCount = new Map();
-  for (const idea of ideas) {
-    topicCount.set(idea.topic, (topicCount.get(idea.topic) ?? 0) + 1);
-    for (const tag of tagsOf(idea)) tagCount.set(tag, (tagCount.get(tag) ?? 0) + 1);
-  }
-  const tags = [...tagCount].sort(([leftTag, leftCount], [rightTag, rightCount]) => rightCount - leftCount || leftTag.localeCompare(rightTag, 'de'));
+  for (const idea of ideas) topicCount.set(idea.topic, (topicCount.get(idea.topic) ?? 0) + 1);
+  const tags = [...tagCounts(ideas)].sort(([leftTag, leftCount], [rightTag, rightCount]) => rightCount - leftCount || leftTag.localeCompare(rightTag, 'de'));
   const tagItems = tags.length ? tags.map(([tag, count]) => {
     const active = filter.tag === tag;
     return `<div class="ib-rail-item${active ? ' is-active' : ''}">
