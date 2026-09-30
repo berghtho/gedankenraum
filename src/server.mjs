@@ -380,7 +380,8 @@ export async function start({ open = false, preferredPort = Number(process.env.G
     return { existing: true, statePath, url: instance.existing.url ?? null };
   }
   // Vor dem ersten Lesen und Schreiben, damit keine Analyse in das Update hineinschreibt.
-  const update = await pullFastForward(statePath);
+  // Offline soll der Start nur kurz warten.
+  const update = await pullFastForward(statePath, 5_000);
   if (update?.error) console.log(`Nicht aktualisiert: ${update.error}`);
   else if (update?.pulled) console.log(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
   const app = createGedankenraumServer({ statePath, update });

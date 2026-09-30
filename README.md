@@ -94,7 +94,7 @@ zusammen: Der Commit bleibt lokal, und nach einem `git pull` im Repository läss
 Beim Start holt Gedankenraum neue Commits aus dem Remote-Repository, bevor die Sammlung geladen wird, aber
 nur per Fast-Forward. Gibt es hier und im Remote-Repository verschiedene neue Commits oder würde eine noch
 nicht gepushte `ideas.json` überschrieben, bleibt alles unverändert und ein Hinweis erscheint. Ist das
-Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 15 Sekunden ohne Update.
+Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 5 Sekunden ohne Update.
 
 Über `IMPORT` kann eine bestehende `ideas.json` ausgewählt werden. Ihre Gedanken werden mit der
 aktuellen Sammlung zusammengeführt; bereits vorhandene IDs werden übersprungen.

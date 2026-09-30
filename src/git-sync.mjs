@@ -43,13 +43,13 @@ export async function gitStatus(filePath) {
 
 // Beim Start holt Gedankenraum neue Commits, aber nur per Fast-Forward: Es entsteht nie ein Merge,
 // der die JSON-Datei mit Konfliktmarkern beschädigen könnte. Offline startet die App ohne Update.
-export async function pullFastForward(filePath) {
+export async function pullFastForward(filePath, fetchTimeout = 15_000) {
   const status = await gitStatus(filePath);
   if (!status.available || !status.upstream) return null;
   const { upstream } = status;
   const cwd = dirname(filePath);
   try {
-    await git(['fetch', '--quiet'], cwd, 15_000);
+    await git(['fetch', '--quiet'], cwd, fetchTimeout);
     const fetched = await gitStatus(filePath);
     if (!fetched.behind) return { upstream, pulled: 0 };
     if (fetched.ahead) throw new Error(`Hier und in ${upstream} gibt es verschiedene neue Commits. Bitte im Repository zusammenführen.`);

@@ -136,3 +136,10 @@ test('launch pull never overwrites an unpushed ideas.json and survives an unreac
   assert.equal(offline.pulled, 0);
   assert.ok(offline.error);
 });
+
+test('the launch fetch gives up after the given timeout', async () => {
+  const { file } = repository();
+  const slow = await pullFastForward(file, 1);
+  assert.equal(slow.pulled, 0);
+  assert.match(slow.error, /nicht rechtzeitig/);
+});
