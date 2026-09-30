@@ -2,17 +2,18 @@ import { relationLabels } from './mindmap.mjs';
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 export function connectionsMarkup(idea, ideas) {
+  const byId = new Map(ideas.map((item) => [item.id, item]));
   const rows = [];
   for (const from of ideas) for (const edge of from.relations ?? []) {
     if (!relationLabels[edge.type] || (from.id !== idea.id && edge.targetId !== idea.id)) continue;
-    const target = ideas.find((item) => item.id === edge.targetId);
+    const target = byId.get(edge.targetId);
     if (!target) continue;
     const outgoing = from.id === idea.id;
     const other = outgoing ? target : from;
     const direction = outgoing ? `Dieser Gedanke ${relationLabels[edge.type]} →` : ({ builds: '← baut auf diesem Gedanken auf', contradicts: '← widerspricht diesem Gedanken', example: '← Beispiel für diesen Gedanken' })[edge.type];
     rows.push(`<div class="ib-connection"><button type="button" data-related-open="${html(other.id)}"><small>${direction}</small><span>${html(other.title)}</span></button><button type="button" data-connection-remove data-from="${html(from.id)}" data-target="${html(target.id)}" data-relation="${edge.type}" aria-label="Verbindung entfernen">×</button></div>`);
   }
-  const parent = ideas.find((item) => item.id === idea.parentId);
+  const parent = byId.get(idea.parentId);
   return `<section class="ib-related"><div class="ib-section-head"><span class="ib-detail-label">VERBINDUNGEN</span><button class="ib-small-btn" type="button" data-connect-open>+ VERBINDEN</button></div>${parent ? `<button class="ib-parent-link" type="button" data-related-open="${html(parent.id)}">Untergedanke von ${html(parent.title)}</button>` : ''}${rows.join('') || '<p class="ib-tools-note">Verknüpfe Gedanken auch über Themengrenzen hinweg.</p>'}</section>`;
 }
 

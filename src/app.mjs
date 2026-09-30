@@ -1,4 +1,4 @@
-import { layoutMindmap, mindmapMarkup, relationLabels, topicColor } from './mindmap.mjs';
+import { connectionCount, layoutMindmap, mindmapMarkup, topicColor } from './mindmap.mjs';
 import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
@@ -107,15 +107,16 @@ function emptyMarkup(hasFilter, hasIdeas, room, query) {
     <p><button class="ib-small-btn" type="button" data-idea-filter-clear="all">FILTER AUFHEBEN</button></p></div></div>`;
 }
 
-const outsideRoom = (idea, room) => !!room && !room.ideaIds.includes(idea.id);
-function listMarkup(ideas, selectedId, terms, room) {
+// roomIds: Gedanken des aktiven Raums als Set, ohne Raum null.
+const outsideRoom = (idea, roomIds) => !!roomIds && !roomIds.has(idea.id);
+function listMarkup(ideas, selectedId, terms, roomIds) {
   return `<div class="ib-thought-cards">${ideas.map((idea) => rowMarkup(idea, selectedId, {
     terms,
-    meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, isDerived(idea) ? 'KI-Vorschlag' : null, questionLabel(idea), idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
+    meta: [outsideRoom(idea, roomIds) ? 'nicht im Raum' : null, isDerived(idea) ? 'KI-Vorschlag' : null, questionLabel(idea), idea.source === 'link' ? hostOf(idea.url) : null, relativeDate(idea.createdAt)].filter(Boolean).join(' · '),
   })).join('')}</div>`;
 }
 
-function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
+function timelineMarkup(ideas, selectedId, colorFor, terms, roomIds) {
   const sorted = [...ideas].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const days = new Map();
   for (const idea of sorted) {
@@ -127,7 +128,7 @@ function timelineMarkup(ideas, selectedId, colorFor, terms, room) {
     <div class="ib-day-label">${html(label)}</div>
     <div class="ib-day-rows">${entries.map((idea) => rowMarkup(idea, selectedId, {
       color: colorFor(idea.topic), terms, tags: true,
-      meta: [outsideRoom(idea, room) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
+      meta: [outsideRoom(idea, roomIds) ? 'nicht im Raum' : null, idea.source === 'link' ? hostOf(idea.url) : isDerived(idea) ? 'KI-VORSCHLAG' : sourceLabel(idea.source), questionLabel(idea)?.toLocaleUpperCase('de-DE')].filter(Boolean).join(' · '),
     })).join('')}</div>
   </div>`).join('');
 }
@@ -195,14 +196,6 @@ function relatedMarkup(idea, ideas, colorFor) {
   }).join('')}</div></div>`;
 }
 
-function connectionCount(idea, ideas) {
-  let count = ideas.some((item) => item.id === idea.parentId) ? 1 : 0;
-  for (const from of ideas) for (const edge of from.relations ?? []) {
-    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ideas.some((item) => item.id === edge.targetId)) count += 1;
-  }
-  return count;
-}
-
 const researchButton = (label = 'RECHERCHIEREN') => `<button class="ib-small-btn" type="button" data-research title="Sendet den Gedanken an Codex und recherchiert im Web">${label}</button>`;
 // Quellen sind beim Speichern geprüft; als Link erscheint trotzdem nur http(s).
 const sourceLinks = (sources) => `<span class="ib-research-sources">${sources.filter((source) => isWebUrl(source.url)).map((source) => `<a href="${html(source.url)}" target="_blank" rel="noreferrer" title="${html(source.title)}">${html(hostOf(source.url))} ↗</a>`).join('')}</span>`;
@@ -224,7 +217,8 @@ function researchMarkup(idea, ideas) {
   const pending = research.status === 'pending';
   const meta = [research.engine, research.completedAt ? relativeDate(research.completedAt) : null].filter(Boolean).join(' · ');
   const resultId = research.resultId ?? research.completedAt ?? research.requestedAt;
-  const adopted = (index) => ideas.some((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId && other.researchOrigin.index === index);
+  const taken = new Set(ideas.filter((other) => other.researchOrigin?.ideaId === idea.id && (other.researchOrigin.resultId ?? other.researchOrigin.completedAt) === resultId).map((other) => other.researchOrigin.index));
+  const adopted = (index) => taken.has(index);
   const findings = research.findings.length ? `<ol class="ib-research-findings">${research.findings.map((finding, index) => `<li><b>0${index + 1}</b><div><p>${html(finding.text)}</p>${sourceLinks(finding.sources)}<button class="ib-finding-adopt" type="button" data-research-accept="${index}" data-research-result="${html(resultId)}"${adopted(index) ? ' disabled' : ''}>${adopted(index) ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></div></li>`).join('')}</ol>` : '';
   const closes = research.status === 'ready' && isQuestion(idea) && !idea.answeredAt;
   return `<section class="ib-research">
@@ -402,7 +396,7 @@ export function initGedankenraum({ root, getToken }) {
     const topicOk = topicMatcher(filter.topic, parsed.topic);
     const searching = !!(terms.length || typedTags.length || parsed.topic || (filter.global && (filter.tag || filter.topic)));
     const pool = searching ? ideas : spaces.contextIdeas(ideas);
-    const room = spaces.currentRoom();
+    const roomIds = new Set(spaces.currentRoom()?.ideaIds ?? []);
     const results = pool.filter((idea) => {
       const folded = foldedOf(idea);
       return (!chipTag || folded.tagList.includes(chipTag))
@@ -413,7 +407,7 @@ export function initGedankenraum({ root, getToken }) {
     });
     if (!terms.length) return results;
     return results
-      .map((idea, index) => ({ idea, index, score: scoreOf(foldedOf(idea), terms) + (room?.ideaIds.includes(idea.id) ? 100 : 0) }))
+      .map((idea, index) => ({ idea, index, score: scoreOf(foldedOf(idea), terms) + (roomIds.has(idea.id) ? 100 : 0) }))
       .sort((left, right) => right.score - left.score || left.index - right.index)
       .map(({ idea }) => idea);
   };
@@ -432,6 +426,7 @@ export function initGedankenraum({ root, getToken }) {
     const visible = visibleIdeas();
     const idea = selected();
     const room = spaces.currentRoom();
+    const roomIds = room ? new Set(room.ideaIds) : null;
     count.textContent = `${visible.length} VON ${ideas.length}`;
     grid.classList.toggle('is-tree', view === 'tree');
     grid.classList.toggle('has-library', libraryOpen);
@@ -447,12 +442,12 @@ export function initGedankenraum({ root, getToken }) {
     q('[data-reanalyze]').textContent = refreshing ? `NEU-ANALYSE ABBRECHEN · ${refreshing} OFFEN` : 'ALLE NEU ANALYSIEREN';
     q('[data-trash-open]').textContent = `PAPIERKORB${trash.length ? ` · ${trash.length}` : ''}`;
     const hasFilter = !!(filter.tag || filter.topic || filter.question || filter.query);
-    const outside = room ? visible.filter((candidate) => outsideRoom(candidate, room)).length : 0;
+    const outside = roomIds ? visible.filter((candidate) => outsideRoom(candidate, roomIds)).length : 0;
     let body;
     if (view === 'tree') body = mindmapMarkup(visible, selectedId, colorFor, thinking.mapState);
     else if (!visible.length) body = emptyMarkup(hasFilter, ideas.length > 0, room, filter.query);
-    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, room);
-    else body = listMarkup(visible, selectedId, terms, room);
+    else if (view === 'time') body = timelineMarkup(visible, selectedId, colorFor, terms, roomIds);
+    else body = listMarkup(visible, selectedId, terms, roomIds);
     map.innerHTML = (hasFilter ? filterMarkup(filter, visible.length, outside) : '') + body;
     detail.innerHTML = panelHeadMarkup(idea) + detailMarkup(idea, ideas, colorFor, terms);
     const announce = hasFilter ? (visible.length ? `${visible.length} Treffer` : 'Nichts gefunden') : '';
@@ -586,7 +581,11 @@ export function initGedankenraum({ root, getToken }) {
   };
   const spaces = initWorkspaces({
     root, snapshot: () => ({ ideas, trash, canUndo, rooms, reflections }), command: runCommand, render, reveal, selected,
-    visibleIds: () => visibleIdeas().filter((idea) => !spaces.roomId() || spaces.currentRoom().ideaIds.includes(idea.id)).map((idea) => idea.id),
+    visibleIds: () => {
+      const room = spaces.currentRoom();
+      const roomIds = room && new Set(room.ideaIds);
+      return visibleIdeas().filter((idea) => !roomIds || roomIds.has(idea.id)).map((idea) => idea.id);
+    },
     canNavigate: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
     openPanel: () => { detailOpen = false; render(); },
   });

@@ -10,6 +10,16 @@ export function topicColor(topic) {
 }
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
+// Verbindungen eines Gedankens: sein Elternknoten und jede benannte Beziehung zu einem vorhandenen Gedanken.
+export function connectionCount(idea, ideas) {
+  const ids = new Set(ideas.map((item) => item.id));
+  let count = ids.has(idea.parentId) ? 1 : 0;
+  for (const from of ideas) for (const edge of from.relations ?? []) {
+    if (relationLabels[edge.type] && (from.id === idea.id || edge.targetId === idea.id) && ids.has(edge.targetId)) count += 1;
+  }
+  return count;
+}
+
 // Übernommene Vorschläge und Recherche-Befunde hängen in der Mindmap an dem ersten sichtbaren Gedanken,
 // auf dem sie aufbauen. Ein selbst gesetzter Elternknoten geht vor; gespeichert wird dabei nichts.
 export function displayParent(idea, byId) {
