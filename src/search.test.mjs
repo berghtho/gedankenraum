@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, windowAround } from './search.mjs';
 
 test('link keys ignore protocol, www, trailing slash, anchors, tracking and YouTube variants', () => {
   const video = linkKey('https://www.youtube.com/watch?v=abc123&t=42s&si=xyz');
@@ -97,4 +97,15 @@ test('host and path of links are readable', () => {
   assert.equal(pathOf('https://www.heise.de/news/abc?x=1'), '/news/abc?x=1');
   assert.equal(pathOf('https://grugbrain.dev/'), '');
   assert.equal(hostOf('kein link'), 'kein link');
+});
+
+test('a clicked topic matches exactly, a typed thema: matches as prefix', () => {
+  const topics = ['Kunst', 'Kunstgeschichte', 'Baukunst', 'Hütten', 'kunst'].map(fold);
+  const pick = (matcher) => topics.filter(matcher);
+  assert.deepEqual(pick(topicMatcher('Kunst', null)), ['kunst', 'kunst']);
+  assert.deepEqual(pick(topicMatcher('Kunst', 'bau')), ['kunst', 'kunst'], 'the chip wins over typed text');
+  assert.deepEqual(pick(topicMatcher(null, 'kunst')), ['kunst', 'kunstgeschichte', 'kunst']);
+  assert.deepEqual(pick(topicMatcher(null, 'huett')), ['hutten']);
+  assert.equal(topicMatcher(null, ''), null);
+  assert.equal(topicMatcher(null, null), null);
 });

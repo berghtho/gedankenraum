@@ -4,7 +4,7 @@ import { connectionsMarkup, initThinkingTools } from './thinking-tools.mjs';
 import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
-import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, variantsOf, windowAround } from './search.mjs';
+import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 const VIEW_KEY = 'gedankenraum.view';
 const RAIL_KEY = 'gedankenraum.rail';
@@ -399,7 +399,7 @@ export function initGedankenraum({ root, getToken }) {
     const terms = termsOf(parsed.text);
     const chipTag = fold(filter.tag ?? '');
     const typedTags = parsed.tag ? variantsOf(fold(parsed.tag)) : [];
-    const topics = (filter.topic ?? parsed.topic) ? variantsOf(fold(filter.topic ?? parsed.topic)) : [];
+    const topicOk = topicMatcher(filter.topic, parsed.topic);
     const searching = !!(terms.length || typedTags.length || parsed.topic || (filter.global && (filter.tag || filter.topic)));
     const pool = searching ? ideas : spaces.contextIdeas(ideas);
     const room = spaces.currentRoom();
@@ -407,7 +407,7 @@ export function initGedankenraum({ root, getToken }) {
       const folded = foldedOf(idea);
       return (!chipTag || folded.tagList.includes(chipTag))
         && (!typedTags.length || typedTags.some((variant) => folded.tagList.some((tag) => tag.startsWith(variant))))
-        && (!topics.length || topics.some((variant) => folded.topic.includes(variant)))
+        && (!topicOk || topicOk(folded.topic))
         && (!filter.question || (isQuestion(idea) && (filter.question === 'answered') === !!idea.answeredAt))
         && matches(folded.hay, terms);
     });

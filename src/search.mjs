@@ -12,6 +12,15 @@ export const termsOf = (query) => [...new Set(fold(query).split(/\s+/).filter(Bo
 
 export const matches = (folded, terms) => terms.every((variants) => variants.some((variant) => folded.includes(variant)));
 
+// Themenfilter auf das gefaltete Thema: ein Klick (Leiste, Chip) wählt genau dieses Thema,
+// getipptes „thema:X“ findet jedes Thema, das so beginnt. Ohne Filter null.
+export function topicMatcher(chip, typed) {
+  if (chip) { const wanted = fold(chip); return (topic) => topic === wanted; }
+  if (!typed) return null;
+  const variants = variantsOf(fold(typed));
+  return (topic) => variants.some((variant) => topic.startsWith(variant));
+}
+
 // Gefalteter Text plus Abbildung jeder gefalteten Position auf den Originalindex.
 export function foldMap(text) {
   const raw = String(text ?? '');
