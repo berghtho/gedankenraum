@@ -105,7 +105,8 @@ export class IdeaBoard {
     this.makeId = makeId;
     this.pending = Promise.resolve();
     this.history = [];
-    this.analysisTask = null;
+    this.lanes = { analysis: { task: null, requested: false }, research: { task: null, requested: false } };
+    this.researching = null;
     this.generation = 0;
     this.writes = 0;
     this.stopped = false;
@@ -292,22 +293,28 @@ export class IdeaBoard {
   }
 
   resumeAnalysis() {
+    for (const name of Object.keys(this.lanes)) this.#startLane(name);
+  }
+
+  // Analysen und Recherchen laufen in getrennten Spuren: Eine lange Recherche hält neue Gedanken nicht auf.
+  #startLane(name) {
     if (this.stopped) return;
-    if (this.analysisTask) { this.analysisRequested = true; return; }
-    this.analysisRequested = false;
-    this.analysisTask = this.#analyzePending().catch((error) => {
+    const lane = this.lanes[name];
+    if (lane.task) { lane.requested = true; return; }
+    lane.requested = false;
+    lane.task = (name === 'research' ? this.#researchPending() : this.#analyzePending()).catch((error) => {
       // Leave pending work durable on disk failure. Retry or restart can resume it.
       this.lastAnalysisError = error.message;
     }).finally(() => {
-      this.analysisTask = null;
-      if (this.analysisRequested) this.resumeAnalysis();
+      lane.task = null;
+      if (lane.requested) this.#startLane(name);
     });
   }
 
   async whenIdle() {
     await this.pending;
     this.resumeAnalysis();
-    while (this.analysisTask) await this.analysisTask;
+    for (let tasks; (tasks = Object.values(this.lanes).map((lane) => lane.task).filter(Boolean)).length;) await Promise.all(tasks);
     await this.pending;
   }
 
@@ -319,62 +326,74 @@ export class IdeaBoard {
       const state = this.#read();
       const reflection = (state.reflections ?? []).find((item) => item.status === 'pending');
       if (reflection) { await this.#analyzeReflection(reflection); continue; }
-      const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending');
-      if (!idea) {
-        // Recherchen laufen nach den Analysen, damit sie auf fertigen Zusammenfassungen aufbauen.
-        const researched = state.ideas.find((item) => !item.deletedAt && item.research?.status === 'pending');
-        if (!researched) return;
-        await this.#runResearch(researched);
-        continue;
-      }
-      const generation = this.generation;
-      const revision = idea.analysisRevision;
-      let result;
-      let failure;
-      try {
-        let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: null };
-        if (idea.source === 'link') {
-          const page = await this.readLink(idea.url);
-          source = { kind: 'link', text: page.text, url: page.url, pageTitle: page.title ?? null };
-        }
-        result = await this.analyze({
-          input: idea.input, source,
-          existingTopics: [...new Set(state.ideas.filter((item) => !item.deletedAt && item.topic !== 'Unsortiert').map((item) => item.topic))],
-          existingTags: knownTags(state),
-        });
-      } catch (error) { failure = error.message || 'Analyse fehlgeschlagen.'; }
-      await this.#enqueue(() => {
-        if (this.stopped || generation !== this.generation) return;
-        const current = this.#read();
-        const target = current.ideas.find((item) => item.id === idea.id);
-        if (!target || target.deletedAt || target.analysisRevision !== revision || target.analysisState !== 'pending') return;
-        const refresh = target.reanalyze === 'ready';
-        delete target.reanalyze;
-        if (refresh && (failure || result.warning)) {
-          // Eine Neu-Analyse ersetzt eine fertige Analyse nie durch einen Fehler oder die lokale Ersatz-Analyse.
-          target.analysisState = 'ready';
-          target.analysisWarning = `Neu-Analyse nicht möglich${failure ? `: ${failure.replace(/[.\s]+$/, '')}` : ', weil Codex nicht verfügbar war'}. Die bisherige Analyse bleibt.`;
-          this.#write(current);
-          return;
-        }
-        if (failure) {
-          target.analysisState = 'failed';
-          target.analysisWarning = failure;
-        } else {
-          const analysis = normalizedAnalysis(result.analysis ?? result, idea.title);
-          analysis.keywords = preferExistingTags(analysis.keywords, knownTags(current));
-          for (const [key, value] of Object.entries(analysis)) {
-            if (!(target.manualFields ?? []).includes(key)) target[key] = value;
-          }
-          target.engine = clean(result.engine, 'Lokale Analyse');
-          target.analysisState = 'ready';
-          target.analysisResultRevision = revision ?? 0;
-          target.analysisWarning = clean(result.warning) || null;
-        }
-        target.updatedAt = this.now().toISOString();
-        this.#write(current);
-      });
+      // Ein Gedanke in Recherche wartet, damit eine neue Analyse ihm nicht die recherchierte Quelle verändert.
+      const idea = state.ideas.find((item) => !item.deletedAt && item.analysisState === 'pending' && item.id !== this.researching);
+      if (!idea) return;
+      await this.#analyzeIdea(idea, state);
+      this.#startLane('research');
     }
+  }
+
+  async #researchPending() {
+    while (!this.stopped) {
+      await this.pending;
+      // Eine Recherche wartet nur auf die Analyse desselben Gedankens und baut auf ihrer Zusammenfassung auf.
+      const idea = this.#read().ideas.find((item) => !item.deletedAt && item.research?.status === 'pending' && item.analysisState !== 'pending');
+      if (!idea) return;
+      this.researching = idea.id;
+      try { await this.#runResearch(idea); } finally { this.researching = null; }
+      this.#startLane('analysis');
+    }
+  }
+
+  async #analyzeIdea(idea, state) {
+    const generation = this.generation;
+    const revision = idea.analysisRevision;
+    let result;
+    let failure;
+    try {
+      let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: null };
+      if (idea.source === 'link') {
+        const page = await this.readLink(idea.url);
+        source = { kind: 'link', text: page.text, url: page.url, pageTitle: page.title ?? null };
+      }
+      result = await this.analyze({
+        input: idea.input, source,
+        existingTopics: [...new Set(state.ideas.filter((item) => !item.deletedAt && item.topic !== 'Unsortiert').map((item) => item.topic))],
+        existingTags: knownTags(state),
+      });
+    } catch (error) { failure = error.message || 'Analyse fehlgeschlagen.'; }
+    await this.#enqueue(() => {
+      if (this.stopped || generation !== this.generation) return;
+      const current = this.#read();
+      const target = current.ideas.find((item) => item.id === idea.id);
+      if (!target || target.deletedAt || target.analysisRevision !== revision || target.analysisState !== 'pending') return;
+      const refresh = target.reanalyze === 'ready';
+      delete target.reanalyze;
+      if (refresh && (failure || result.warning)) {
+        // Eine Neu-Analyse ersetzt eine fertige Analyse nie durch einen Fehler oder die lokale Ersatz-Analyse.
+        target.analysisState = 'ready';
+        target.analysisWarning = `Neu-Analyse nicht möglich${failure ? `: ${failure.replace(/[.\s]+$/, '')}` : ', weil Codex nicht verfügbar war'}. Die bisherige Analyse bleibt.`;
+        this.#write(current);
+        return;
+      }
+      if (failure) {
+        target.analysisState = 'failed';
+        target.analysisWarning = failure;
+      } else {
+        const analysis = normalizedAnalysis(result.analysis ?? result, idea.title);
+        analysis.keywords = preferExistingTags(analysis.keywords, knownTags(current));
+        for (const [key, value] of Object.entries(analysis)) {
+          if (!(target.manualFields ?? []).includes(key)) target[key] = value;
+        }
+        target.engine = clean(result.engine, 'Lokale Analyse');
+        target.analysisState = 'ready';
+        target.analysisResultRevision = revision ?? 0;
+        target.analysisWarning = clean(result.warning) || null;
+      }
+      target.updatedAt = this.now().toISOString();
+      this.#write(current);
+    });
   }
 
   #active(state, id) {

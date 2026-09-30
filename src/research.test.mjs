@@ -41,6 +41,44 @@ test('research runs after pending analysis, stores sourced findings and leaves t
   assert.equal(board.history.length, undoSteps);
 });
 
+test('a running research does not hold back the analysis of new thoughts and reflections', { timeout: 3000 }, async () => {
+  const gate = deferred(); const entered = deferred();
+  const board = boardFor({
+    research: async () => { entered.resolve(); await gate.promise; return { summary: 'Spät', findings: [] }; },
+    reflect: async () => ({ summary: 'Gemeinsam', findings: [], engine: 'Test-KI' }),
+  });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.execute({ type: 'research', id: idea.id });
+  await entered.promise;
+  const fresh = (await board.execute({ type: 'capture', input: 'Neuer Gedanke' })).idea;
+  await board.execute({ type: 'reflect', kind: 'commonalities', ideaIds: [idea.id, fresh.id] });
+  for (let tries = 0; tries < 200 && (board.snapshot().ideas.find((item) => item.id === fresh.id).analysisState === 'pending'
+    || board.snapshot().reflections[0].status === 'pending'); tries += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(board.snapshot().ideas.find((item) => item.id === fresh.id).summary, 'Kurz: Neuer Gedanke');
+  assert.equal(board.snapshot().reflections[0].status, 'ready');
+  assert.equal(board.snapshot().ideas.find((item) => item.id === idea.id).research.status, 'pending');
+  gate.resolve(); await board.whenIdle();
+  assert.equal(board.snapshot().ideas.find((item) => item.id === idea.id).research.status, 'ready');
+});
+
+test('a thought re-analyzed during its research keeps the research and is analyzed afterwards', { timeout: 3000 }, async () => {
+  const gate = deferred(); const entered = deferred(); let round = 1;
+  const board = boardFor({
+    analyze: async ({ input }) => ({ title: input, summary: `Runde ${round}`, topic: 'Test', keyPoints: [], keywords: [] }),
+    research: async () => { entered.resolve(); await gate.promise; return { summary: 'Antwort', findings: [] }; },
+  });
+  const { idea } = await board.execute({ type: 'capture', input: 'Frage?' });
+  await board.whenIdle();
+  await board.execute({ type: 'research', id: idea.id });
+  await entered.promise;
+  round = 2;
+  await board.execute({ type: 'reanalyzeAll' });
+  gate.resolve(); await board.whenIdle();
+  const saved = board.snapshot().ideas[0];
+  assert.equal(saved.research.status, 'ready');
+  assert.equal(saved.summary, 'Runde 2');
+});
+
 test('a failed re-run keeps the previous result visible, can be retried and rejects non-web sources', async () => {
   const board = boardFor();
   const { idea } = await board.execute({ type: 'capture', input: 'These' });
