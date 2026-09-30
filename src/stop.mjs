@@ -3,10 +3,34 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { defaultAppDirectory } from './server.mjs';
 
-export async function stop({ appDirectory = defaultAppDirectory() } = {}) {
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+// Erst wenn die alte Instanz ihre Sperre freigegeben hat, sagt ein sofortiger Neustart nicht „läuft bereits“.
+async function released(lockPath, pid, wait) {
+  const until = Date.now() + wait;
+  while (Date.now() < until) {
+    let current = null;
+    try { current = JSON.parse(await readFile(lockPath, 'utf8')); } catch (error) {
+      if (error.code === 'ENOENT') return true;
+    }
+    if ((current && current.pid !== pid) || !processIsRunning(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+export async function stop({ appDirectory = defaultAppDirectory(), wait = 5000 } = {}) {
+  const lockPath = join(appDirectory, '.instance.json');
   let instance;
   try {
-    instance = JSON.parse(await readFile(join(appDirectory, '.instance.json'), 'utf8'));
+    instance = JSON.parse(await readFile(lockPath, 'utf8'));
   } catch (error) {
     if (error.code === 'ENOENT') return { stopped: false };
     throw error;
@@ -46,6 +70,7 @@ export async function stop({ appDirectory = defaultAppDirectory() } = {}) {
   if (!response.ok || (await response.json()).stopped !== true) {
     throw new Error('Gedankenraum konnte nicht beendet werden.');
   }
+  await released(lockPath, instance.pid, wait);
   return { stopped: true };
 }
 
