@@ -118,7 +118,19 @@ function processIsRunning(pid) {
   }
 }
 
-function claimInstance(lockPath) {
+// Windows vergibt Prozess-IDs neu; ob die Instanz noch läuft, zeigt erst ihre Antwort.
+async function answersAsGedankenraum(address) {
+  try {
+    const url = new URL(address);
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') return false;
+    const response = await fetch(`${url.origin}/api/session`, { signal: AbortSignal.timeout(2000), redirect: 'error' });
+    return response.ok && (await response.json()).app === 'gedankenraum';
+  } catch {
+    return false;
+  }
+}
+
+export async function claimInstance(lockPath) {
   mkdirSync(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -144,7 +156,10 @@ function claimInstance(lockPath) {
       if (error.code !== 'EEXIST') throw error;
       let existing = null;
       try { existing = JSON.parse(readFileSync(lockPath, 'utf8')); } catch { /* Incomplete stale lock. */ }
-      if (processIsRunning(existing?.pid)) return { existing, update() {}, release() {} };
+      // Ohne Adresse startet die Instanz noch.
+      if (processIsRunning(existing?.pid) && (!existing.url || await answersAsGedankenraum(existing.url))) {
+        return { existing, update() {}, release() {} };
+      }
       try { unlinkSync(lockPath); } catch (unlinkError) {
         if (unlinkError.code !== 'ENOENT') throw unlinkError;
       }
@@ -345,7 +360,7 @@ async function listen(server, preferredPort) {
 
 export async function start({ open = false, preferredPort = Number(process.env.GEDANKENRAUM_PORT) || 7788 } = {}) {
   const statePath = configuredStatePath();
-  const instance = claimInstance(join(defaultAppDirectory(), '.instance.json'));
+  const instance = await claimInstance(join(defaultAppDirectory(), '.instance.json'));
   if (instance.existing) {
     console.log('Gedankenraum läuft bereits.');
     if (open && instance.existing.url) openBrowser(instance.existing.url);

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { createLocalAnalyzer } from './local-analysis.mjs';
-import { configuredStatePath, createGedankenraumServer, defaultStatePath } from './server.mjs';
+import { claimInstance, configuredStatePath, createGedankenraumServer, defaultStatePath } from './server.mjs';
 
 const statusWithHost = (port, host) => new Promise((resolve, reject) => {
   const req = request({ hostname: '127.0.0.1', port, path: '/api/ideas', headers: { host } }, (res) => {
@@ -260,6 +260,34 @@ test('HTTP capture returns persisted pending data while analysis waits; edits an
     for (const asset of ['mindmap.mjs', 'thinking-tools.mjs', 'search.mjs', 'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs']) assert.equal((await fetch(`${origin}/${asset}`)).status, 200);
   } finally {
     release();
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});
+
+test('a lock of a reused process ID does not block the start; a running or starting instance does', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gedankenraum-instance-'));
+  const lockPath = join(directory, '.instance.json');
+  const lock = (url) => writeFileSync(lockPath, JSON.stringify({ identity: 'alt', pid: process.pid, url }));
+  const other = createServer((req, res) => { res.writeHead(404); res.end(); });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const app = createGedankenraumServer({ statePath: join(directory, 'ideas.json'), settingsPath: join(directory, 'settings.json'), analyzer: createLocalAnalyzer() });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const running = `http://127.0.0.1:${app.server.address().port}`; app.setOrigin(running);
+  try {
+    lock(null);
+    assert.equal((await claimInstance(lockPath)).existing.pid, process.pid);
+    lock(running);
+    assert.equal((await claimInstance(lockPath)).existing.url, running);
+
+    lock(`http://127.0.0.1:${other.address().port}`);
+    const claimed = await claimInstance(lockPath);
+    assert.equal(claimed.existing, null);
+    assert.notEqual(JSON.parse(readFileSync(lockPath, 'utf8')).identity, 'alt');
+    claimed.release();
+    assert.equal(existsSync(lockPath), false);
+  } finally {
+    other.close();
     app.server.closeAllConnections();
     await new Promise((resolve) => app.server.close(resolve));
   }
