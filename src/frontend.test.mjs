@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { connectionCount, TOPIC_COLORS, topicColor } from './mindmap.mjs';
@@ -22,4 +23,15 @@ test('connections count the present parent and named relations in both direction
   assert.equal(connectionCount(ideas[0], ideas), 2);
   assert.equal(connectionCount(ideas[1], ideas), 4);
   assert.equal(connectionCount(ideas[2], ideas), 1);
+});
+
+// app.mjs greift beim Laden auf das DOM zu; seine Module lassen sich ohne Browser prüfen.
+test('every name app.mjs imports is exported by its module', async () => {
+  const source = await readFile(new URL('./app.mjs', import.meta.url), 'utf8');
+  const imports = [...source.matchAll(/import \{([^}]+)\} from '\.\/([\w-]+\.mjs)'/g)];
+  assert.ok(imports.length > 5);
+  for (const [, names, file] of imports) {
+    const module = await import(`./${file}`);
+    for (const name of names.split(',').map((part) => part.trim()).filter(Boolean)) assert.equal(typeof module[name], 'function', `${file}: ${name}`);
+  }
 });

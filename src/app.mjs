@@ -4,6 +4,7 @@ import { initWorkspaces } from './workspace-ui.mjs';
 import { initInlineThought } from './inline-thought.mjs';
 import { initTagCleanup } from './tag-cleanup.mjs';
 import { initStorageDialog } from './storage-ui.mjs';
+import { initGitPush } from './git-ui.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, isWebUrl, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 import { html, tagCounts, tagsOf } from './util.mjs';
@@ -329,7 +330,6 @@ export function initGedankenraum({ root, getToken }) {
   const menuList = q('[data-menu-list]');
   const importOpen = q('[data-import-open]');
   const importFile = q('[data-import-file]');
-  const gitPush = q('[data-git-push]');
   const tagDialog = q('[data-tag-dialog]');
   const tagName = q('[data-tag-name]');
   const tagHint = q('[data-tag-hint]');
@@ -456,39 +456,9 @@ export function initGedankenraum({ root, getToken }) {
     }
     if (focusedId) [...map.querySelectorAll('[data-idea-id]')].find((button) => button.dataset.ideaId === focusedId)?.focus({ preventScroll: true });
   };
-  // Liegt ideas.json eingecheckt in einem Git-Repository, bietet das Menü bei Änderungen „Push“ an.
-  // Geprüft wird kurz nach jeder Änderung der Sammlung und beim Öffnen des Menüs.
-  let gitTimer = null;
-  let gitCheck = 0;
-  const showGit = (git) => {
-    const pending = !!git?.available && (git.changed || git.ahead > 0);
-    gitPush.hidden = !pending;
-    if (!pending) return;
-    // Push nimmt alle lokalen Commits des Branches mit, auch solche, die nicht von Gedankenraum stammen.
-    const foreign = git.foreign > 0 ? git.foreign : 0;
-    const others = `${foreign} fremde${foreign === 1 ? 'r' : ''} Commit${foreign === 1 ? '' : 's'}`;
-    gitPush.textContent = git.changed ? `PUSH · ideas.json geändert${foreign ? ` (+ ${others})` : ''}` : `PUSH · ${git.ahead} Commit${git.ahead === 1 ? '' : 's'} offen${foreign ? ` (${foreign} fremde)` : ''}`;
-    gitPush.title = `Committet ideas.json und pusht ${git.branch}${git.upstream ? ` nach ${git.upstream}` : ''}`
-      + (foreign ? `. Dabei ${foreign === 1 ? 'wird' : 'werden'} auch ${others} gepusht, ${foreign === 1 ? 'der' : 'die'} nicht von Gedankenraum ${foreign === 1 ? 'stammt' : 'stammen'}.` : '');
-  };
-  const loadGit = async () => {
-    clearTimeout(gitTimer);
-    const check = ++gitCheck;
-    try {
-      const response = await fetch('/api/git');
-      const git = await response.json();
-      if (check === gitCheck) showGit(response.ok ? git : null);
-      return response.ok ? git : null;
-    } catch { if (check === gitCheck) showGit(null); return null; }
-  };
-  // Was der Start aus dem Remote-Repository geholt hat, erscheint einmal beim Laden.
-  const announceUpdate = (update) => {
-    if (update?.error) showMessage(`Nicht aktualisiert: ${update.error}`, true);
-    else if (update?.pulled) showMessage(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
-  };
   const applySnapshot = (snapshot) => {
     if (!Array.isArray(snapshot.ideas)) return;
-    clearTimeout(gitTimer); gitTimer = setTimeout(loadGit, 1000);
+    gitSync.checkSoon();
     revision = snapshot.revision ?? null;
     ideas = snapshot.ideas;
     trash = snapshot.trash ?? [];
@@ -730,7 +700,7 @@ export function initGedankenraum({ root, getToken }) {
   menuOpen.addEventListener('click', () => {
     menuList.hidden = !menuList.hidden;
     menuOpen.setAttribute('aria-expanded', String(!menuList.hidden));
-    if (!menuList.hidden) loadGit();
+    if (!menuList.hidden) gitSync.check();
   });
   document.addEventListener('click', (event) => { if (!event.target.closest?.('[data-menu]')) closeMenu(); });
   const inField = (target) => !!target.closest?.('input, textarea, select, dialog, [contenteditable="true"]');
@@ -944,7 +914,7 @@ export function initGedankenraum({ root, getToken }) {
     if (!window.confirm('Gedankenraum beenden?')) return;
     try {
       await post('/api/shutdown');
-      polling = false; clearTimeout(pollTimer); clearTimeout(gitTimer);
+      polling = false; clearTimeout(pollTimer); gitSync.stop();
       document.body.innerHTML = '<div class="stopped"><b>Gedankenraum wurde beendet.</b><span>Dieser Tab kann geschlossen werden.</span></div>';
       window.close();
     } catch (error) {
@@ -955,20 +925,7 @@ export function initGedankenraum({ root, getToken }) {
     root, request: post, render, notify: showMessage, closeMenu,
     reset: () => { spaces.reset(); selectedId = null; detailOpen = false; },
   });
-  gitPush.addEventListener('click', async () => {
-    gitPush.disabled = true;
-    showMessage('ideas.json wird committet und gepusht …');
-    try {
-      const git = await post('/api/git/push');
-      gitCheck += 1; showGit(git);
-      showMessage(git.pushed ? `ideas.json wurde nach ${git.upstream ?? git.branch} gepusht.` : 'Keine Änderungen zum Pushen.');
-    } catch (error) {
-      showMessage(error.message, true);
-      loadGit();
-    } finally {
-      gitPush.disabled = false;
-    }
-  });
+  const gitSync = initGitPush({ root, request: post, notify: showMessage });
 
   // Gefragt wird nur, ob sich seit dem angezeigten Stand etwas geändert hat; 204 heißt unverändert.
   const refresh = async () => {
@@ -1000,7 +957,7 @@ export function initGedankenraum({ root, getToken }) {
       render();
       if (!narrow.matches && !q('dialog[open]')) captureInput.focus();
       pollTimer = setTimeout(refresh, 1200);
-      loadGit().then((git) => announceUpdate(git?.update));
+      gitSync.load();
       fetch('/api/ideas/status').then((response) => response.json()).then((engine) => {
         status.textContent = engine.engine ?? 'Analyse nicht verfügbar';
         status.classList.toggle('is-fallback', !engine.available);
