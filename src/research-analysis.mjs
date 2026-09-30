@@ -38,7 +38,7 @@ export function researchPrompt({ source }) {
   ].join('\n');
 }
 
-const webUrl = (value) => {
+export const webUrl = (value) => {
   try {
     const url = new URL(value);
     return ['http:', 'https:'].includes(url.protocol) ? url.href : null;

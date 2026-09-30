@@ -226,3 +226,21 @@ test('importing rejects unknown formats without changing the collection', async 
   await assert.rejects(() => board.importState({ version: 1, ideas: [{}] }), IdeaBoardValidationError);
   assert.equal(readFileSync(board.path, 'utf8'), before);
 });
+
+test('thought links must be web addresses in imports and data files', async () => {
+  const board = makeBoard();
+  await captureAnalyzed(board, { type: 'capture', input: 'Bleibt erhalten' });
+  const before = readFileSync(board.path, 'utf8');
+  for (const url of ['javascript:alert(1)', 'data:text/html,x', 'kein Link', 42, ['https://example.com']]) {
+    await assert.rejects(() => board.importState({ version: 1, ideas: [{ id: 'bad', source: 'link', url }] }), /ungültigen Link/);
+  }
+  assert.equal(readFileSync(board.path, 'utf8'), before);
+  const imported = await board.importState({ version: 1, ideas: [{ id: 'link', source: 'link', url: 'https://example.com/a' }, { id: 'text', url: null }] });
+  assert.equal(imported.imported, 2);
+
+  const state = JSON.parse(readFileSync(board.path, 'utf8'));
+  state.ideas[0].url = 'javascript:alert(1)';
+  writeFileSync(board.path, JSON.stringify(state));
+  assert.throws(() => board.snapshot(), /ungültigen Link/);
+  await assert.rejects(() => makeBoard().switchStorage(board.path), /ungültigen Link/);
+});

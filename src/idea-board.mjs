@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { REFLECTION_KINDS, reflectionSources, validateReflection } from './reflection-analysis.mjs';
-import { researchSource, validateResearch, validSources } from './research-analysis.mjs';
+import { researchSource, validateResearch, validSources, webUrl } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
 
 const MAX_INPUT = 12_000;
@@ -824,6 +824,10 @@ export class IdeaBoard {
     for (const idea of state.ideas) {
       if (idea.parentId != null && (typeof idea.parentId !== 'string' || !idea.parentId.trim())) {
         throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen übergeordneten Gedanken.');
+      }
+      // Links landen im href der Oberfläche; nur http(s) ist erlaubt.
+      if (idea.url != null && (typeof idea.url !== 'string' || !webUrl(idea.url))) {
+        throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Link.');
       }
       if (idea.relations !== undefined && (!Array.isArray(idea.relations) || idea.relations.some((edge) => !edge
         || typeof edge.targetId !== 'string' || !edge.targetId.trim() || !RELATIONS.has(edge.type)))) {
