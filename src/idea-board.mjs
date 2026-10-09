@@ -172,6 +172,11 @@ export class IdeaBoard {
     return this.#enqueue(() => this.#switchStorage(path, mode)).then((result) => { this.resumeAnalysis(); return result; });
   }
 
+  // Läuft in derselben Warteschlange wie alle Änderungen, etwa ein git pull vor dem Digest-Eingang.
+  exclusive(work) {
+    return this.#enqueue(work);
+  }
+
   importState(imported) {
     return this.#enqueue(() => this.#importState(imported)).then((result) => { this.resumeAnalysis(); return result; });
   }

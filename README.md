@@ -93,6 +93,31 @@ verteilt ausgewählt. Kürzungen sind sichtbar; der verwendete Quellenstand blei
 gespeichert. Die automatische Einordnung verwendet bis zu 24.000 Zeichen verteilter Auszüge.
 Der vollständige Digest bleibt lokal gespeichert und durchsuchbar.
 
+### Digest-Eingang
+
+Digests lassen sich auch automatisch ablegen, etwa von einem geplanten Agenten. Dafür eine JSON-Datei in
+den Ordner `.gedankenraum\inbox` im Programmordner legen (per `GEDANKENRAUM_INBOX` änderbar; der Ordner ist
+von Git ausgenommen):
+
+```json
+{
+  "format": "gedankenraum-inbox",
+  "version": 1,
+  "type": "digest",
+  "title": "YouTube AI digest – 2026-10-09",
+  "text": "## Theo\n\n- …",
+  "sourceUrls": ["https://www.youtube.com/watch?v=…"]
+}
+```
+
+Läuft Gedankenraum, übernimmt es neue Dateien nach wenigen Sekunden, sonst beim nächsten Start. Ablauf:
+zuerst `ideas.json` per Fast-Forward holen, dann jede Datei als Digest speichern, nach der Analyse (höchstens
+15 Minuten Wartezeit) `ideas.json` committen und pushen, wie mit `PUSH` im Menü. Würden dabei fremde Commits
+mitgehen, wird nicht automatisch gepusht; dann bleibt `PUSH` im Menü. Übernommene Dateien wandern nach
+`done\`, ungültige nach `failed\`; gelöscht wird nichts. Ein Digest mit gleichem Titel und Text wird nicht
+doppelt angelegt. Dateien zuerst unter einem Namen mit führendem Punkt schreiben und dann umbenennen;
+solche Dateien werden ignoriert. Das Ergebnis des letzten Laufs steht in `.last-run.json`.
+
 ## Daten
 
 Standardmäßig liegen alle Gedanken hier:

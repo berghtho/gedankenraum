@@ -11,6 +11,7 @@ import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
 import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
 import { IdeaBoard, IdeaBoardValidationError, samePath } from './idea-board.mjs';
+import { createInbox, defaultInboxDirectory } from './inbox.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
 import { byUse, tagCounts } from './util.mjs';
 
@@ -190,12 +191,32 @@ export function createGedankenraumServer({
   storageConfigurable = !process.env.GEDANKENRAUM_HOME,
   selectDirectory = browseForDirectory,
   update = null,
+  inboxDirectory = null,
 } = {}) {
   const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, research: analyzer.research, readLink });
   let expectedOrigin = null;
   let expectedHost = null;
   let requestShutdown = () => {};
   let pushing = null;
+  // Ein Push zur Zeit, egal ob aus dem Menü oder aus dem Digest-Eingang.
+  const push = () => {
+    if (!pushing) pushing = commitAndPush(board.path).finally(() => { pushing = null; });
+    return pushing;
+  };
+  // Automatisch wird nur gepusht, wenn keine fremden Commits mitgingen; sonst bleibt PUSH im Menü.
+  const inbox = inboxDirectory ? createInbox({
+    board,
+    directory: inboxDirectory,
+    pull: (path) => pullFastForward(path, 15_000),
+    push: async (path) => {
+      const status = await gitStatus(path);
+      if (!status.available) return { skipped: status.reason };
+      if (status.foreign) return { skipped: `${status.foreign} fremde Commit(s) würden mitgepusht; bitte über PUSH im Menü.` };
+      const result = await push();
+      return { pushed: result.pushed, branch: result.branch, upstream: result.upstream };
+    },
+    log: (message) => console.log(message),
+  }) : null;
 
   const guard = (req) => {
     if (req.headers.origin !== expectedOrigin) return 'Anfrage stammt nicht aus Gedankenraum.';
@@ -266,8 +287,7 @@ export function createGedankenraumServer({
     { method: 'GET', path: '/api/git', handler: async () => ({ ...(await gitStatus(board.path)), update }) },
     { method: 'POST', path: '/api/git/push', auth: true, bodyLimit: 16 * 1024, handler: () => {
       if (pushing) throw new IdeaBoardValidationError('Push läuft bereits.');
-      pushing = commitAndPush(board.path).finally(() => { pushing = null; });
-      return pushing;
+      return push();
     } },
     { method: 'POST', path: '/api/ideas/execute', auth: true, bodyLimit: 4 * 1024 * 1024, handler: ({ body }) => board.execute(body) },
     { method: 'POST', path: '/api/tags/suggest', auth: true, bodyLimit: 16 * 1024, handler: () => {
@@ -315,6 +335,7 @@ export function createGedankenraumServer({
   });
 
   requestShutdown = async () => {
+    await inbox?.stop();
     board.stop();
     await analyzer.stop?.();
     server.close();
@@ -322,10 +343,12 @@ export function createGedankenraumServer({
   return {
     server,
     statePath,
+    inbox,
     setOrigin(origin) {
       expectedOrigin = origin;
       expectedHost = new URL(origin).host;
       board.resumeAnalysis();
+      inbox?.start().catch((error) => console.log(`Digest-Eingang: ${error.message}`));
     },
   };
 }
@@ -364,7 +387,7 @@ export async function start({ open = false, preferredPort = Number(process.env.G
   const update = await pullFastForward(statePath, 5_000);
   if (update?.error) console.log(`Nicht aktualisiert: ${update.error}`);
   else if (update?.pulled) console.log(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
-  const app = createGedankenraumServer({ statePath, update });
+  const app = createGedankenraumServer({ statePath, update, inboxDirectory: defaultInboxDirectory() });
   app.server.once('close', instance.release);
   try {
     const port = await listen(app.server, preferredPort);
@@ -373,6 +396,7 @@ export async function start({ open = false, preferredPort = Number(process.env.G
     instance.update(url);
     console.log(`Gedankenraum: ${url}`);
     console.log(`Daten: ${app.statePath}`);
+    console.log(`Digest-Eingang: ${app.inbox.directory}`);
     console.log('Zum Beenden oben rechts auf BEENDEN klicken.');
     if (open) openBrowser(url);
     return { ...app, url };
