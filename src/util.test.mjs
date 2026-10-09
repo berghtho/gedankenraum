@@ -28,7 +28,7 @@ test('tag counts keep first appearance, byUse puts most-used first and keeps tie
 
 test('reflection kinds have one source shared with the server', () => {
   assert.equal(reexported, REFLECTION_KINDS);
-  assert.deepEqual(Object.keys(REFLECTION_KINDS), ['commonalities', 'contradictions', 'questions']);
+  assert.deepEqual(Object.keys(REFLECTION_KINDS), ['brainstorm', 'commonalities', 'contradictions', 'questions']);
 });
 
 test('browser and server share one rule for links', () => {

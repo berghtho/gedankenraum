@@ -6,6 +6,7 @@ import { REFLECTION_KINDS, reflectionSources, validateReflection } from './refle
 import { researchSource, validateResearch, validSources } from './research-analysis.mjs';
 import { preferExistingTags } from './tag-match.mjs';
 import { byUse, isLinkInput, tagCounts, tagsOf, webUrl } from './util.mjs';
+import { digestSources, textLimit } from './digest.mjs';
 
 const MAX_TEXT = 60_000;
 const MAX_TAGS = 12;
@@ -53,7 +54,7 @@ const emptyState = () => ({ version: 1, ideas: [] });
 export const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 const fileKey = (path, stats) => `${path}|${stats.ino}:${stats.mtimeMs}:${stats.size}`;
 const RELATIONS = new Set(['builds', 'contradicts', 'example']);
-const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
+const USER_FIELDS = ['title', 'summary', 'input', 'notes', 'sourceUrls', 'topic', 'tags', 'manualFields', 'parentId', 'relations', 'deletedAt', 'answeredAt'];
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 // Bei doppelten IDs gilt wie bei find() der erste Eintrag.
 const byId = (items = []) => {
@@ -232,10 +233,17 @@ export class IdeaBoard {
 
   async #capture(command) {
     // keep bewahrt einen Link als Text auf; alles andere außer Links ist ohnehin Text.
-    const keep = command.keep === true;
+    const digest = command.source === 'digest';
+    const keep = digest || command.keep === true;
     const input = typeof command.input === 'string' ? command.input.replace(/\r\n?/g, '\n').trim() : '';
     if (!input) throw new IdeaBoardValidationError('Bitte eine Notiz, einen Text oder einen Link eingeben.');
-    if (input.length > MAX_TEXT) throw new IdeaBoardValidationError(`Text überschreitet ${MAX_TEXT} Zeichen.`);
+    if (input.length > textLimit(command.source)) throw new IdeaBoardValidationError(`Text überschreitet ${textLimit(command.source)} Zeichen.`);
+    if (digest && (!clean(command.title) || command.title.length > 160)) throw new IdeaBoardValidationError('Bitte einen Digest-Titel mit höchstens 160 Zeichen eingeben.');
+    let sourceUrls;
+    if (digest) {
+      try { sourceUrls = digestSources(command.sourceUrls); }
+      catch (error) { throw new IdeaBoardValidationError(error.message); }
+    }
 
     const state = this.#read();
     const room = command.roomId ? this.#room(state, command.roomId) : null;
@@ -251,8 +259,9 @@ export class IdeaBoard {
       topic: parent?.topic ?? clean(command.topic, 'Unsortiert').slice(0, 80),
       // Schlagwörter (keywords) sind Vorschläge der Analyse; tags bestätigt der Mensch.
       tags: [],
-      // Ältere Gedanken können noch source 'note' tragen; neue sind 'link' oder 'text'.
-      source: isLink ? 'link' : 'text',
+      // Ältere Gedanken können noch source 'note' tragen; neue sind 'link', 'text' oder 'digest'.
+      source: digest ? 'digest' : isLink ? 'link' : 'text',
+      ...(digest && { sourceUrls }),
       url: isLink ? input : null,
       input,
       createdAt,
@@ -382,7 +391,7 @@ export class IdeaBoard {
     let result;
     let failure;
     try {
-      let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: null };
+      let source = { kind: idea.source, text: idea.input, url: idea.url, pageTitle: idea.source === 'digest' ? idea.title : null };
       if (idea.source === 'link') {
         const page = await this.readLink(idea.url);
         source = { kind: 'link', text: page.text, url: page.url, pageTitle: page.title ?? null };
@@ -477,15 +486,18 @@ export class IdeaBoard {
     if (!Object.hasOwn(REFLECTION_KINDS, command.kind)) throw new IdeaBoardValidationError('Unbekannte Auswertung.');
     if (!Array.isArray(command.ideaIds) || command.ideaIds.some((id) => typeof id !== 'string')) throw new IdeaBoardValidationError('Bitte Gedanken auswählen.');
     const ids = [...new Set(command.ideaIds)];
-    if (ids.length < 2 || ids.length > 12) throw new IdeaBoardValidationError('Bitte 2 bis 12 Gedanken auswählen.');
+    const minimum = command.kind === 'brainstorm' ? 1 : 2;
+    if (ids.length < minimum || ids.length > 12) throw new IdeaBoardValidationError(`Bitte ${minimum} bis 12 Gedanken auswählen.`);
     const ideas = ids.map((id) => this.#active(state, id));
     const room = command.roomId ? this.#room(state, command.roomId) : null;
     if (room && ids.some((id) => !room.ideaIds.includes(id))) throw new IdeaBoardValidationError('Die Auswahl gehört nicht vollständig zu diesem Arbeitsraum.');
+    if (command.question !== undefined && (typeof command.question !== 'string' || command.question.length > 240)) throw new IdeaBoardValidationError('Die Arbeitsfrage darf höchstens 240 Zeichen enthalten.');
+    const question = command.question === undefined ? room?.question ?? '' : command.question.trim();
     state.reflections ??= [];
     if (state.reflections.filter((item) => item.status === 'pending').length >= 5) throw new IdeaBoardValidationError('Es warten bereits fünf Auswertungen. Bitte kurz warten.');
     const reflection = {
-      id: this.makeId(), roomId: room?.id ?? null, question: room?.question ?? '', kind: command.kind,
-      sources: reflectionSources(ideas), status: 'pending', summary: '', findings: [],
+      id: this.makeId(), roomId: room?.id ?? null, question, kind: command.kind,
+      sources: reflectionSources(ideas, question), status: 'pending', summary: '', findings: [],
       createdAt: this.now().toISOString(), engine: null, error: null,
     };
     state.reflections.unshift(reflection);
@@ -536,7 +548,7 @@ export class IdeaBoard {
       const state = this.#read();
       const target = state.ideas.find((item) => item.id === idea.id && !item.deletedAt);
       if (target?.research?.status !== 'pending' || target.research.requestedAt !== requestedAt) return;
-      if (['input', 'notes', 'title', 'summary', 'keyPoints', 'url'].some((key) => !equal(idea[key], target[key]))) {
+      if (['input', 'notes', 'title', 'summary', 'keyPoints', 'url', 'sourceUrls'].some((key) => !equal(idea[key], target[key]))) {
         failure = 'Der Gedanke wurde während der Recherche geändert. Bitte erneut recherchieren.';
       }
       if (failure) Object.assign(target.research, { status: 'failed', error: failure });
@@ -702,8 +714,13 @@ export class IdeaBoard {
     const idea = this.#active(state, command.id);
     const fields = command.fields;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new IdeaBoardValidationError('Änderungen fehlen.');
-    const limits = { title: 160, summary: 1200, input: MAX_TEXT, notes: MAX_TEXT };
+    const limits = { title: 160, summary: 1200, input: textLimit(idea.source), notes: MAX_TEXT };
     for (const [key, value] of Object.entries(fields)) {
+      if (key === 'sourceUrls' && idea.source === 'digest') {
+        try { idea.sourceUrls = digestSources(value); }
+        catch (error) { throw new IdeaBoardValidationError(error.message); }
+        continue;
+      }
       if (!Object.hasOwn(limits, key) || typeof value !== 'string' || value.length > limits[key]) throw new IdeaBoardValidationError('Ungültige Änderung oder Text zu lang.');
       if (key === 'input' && idea.source === 'link') throw new IdeaBoardValidationError('Die Linkquelle bleibt unverändert. Eigene Ergänzungen unter Notizen speichern.');
       if (['title', 'input'].includes(key) && !value.trim()) throw new IdeaBoardValidationError('Titel und Text dürfen nicht leer sein.');
@@ -882,6 +899,16 @@ export class IdeaBoard {
       throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Gedanken.');
     }
     for (const idea of state.ideas) {
+      if (idea.source === 'digest') {
+        if (typeof idea.title !== 'string' || !idea.title.trim() || idea.title.length > 160
+          || typeof idea.input !== 'string' || !idea.input.trim() || idea.input.length > textLimit('digest')) {
+          throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen Digest.');
+        }
+      }
+      if (idea.sourceUrls !== undefined) {
+        try { digestSources(idea.sourceUrls); }
+        catch { throw new IdeaBoardValidationError('Die Datendatei enthält ungültige Digest-Quellen.'); }
+      }
       if (idea.parentId != null && (typeof idea.parentId !== 'string' || !idea.parentId.trim())) {
         throw new IdeaBoardValidationError('Die Datendatei enthält einen ungültigen übergeordneten Gedanken.');
       }
@@ -929,7 +956,7 @@ export class IdeaBoard {
     for (const reflection of state.reflections ?? []) {
       if (!Object.hasOwn(REFLECTION_KINDS, reflection.kind) || !['pending', 'ready', 'failed'].includes(reflection.status)
         || typeof reflection.question !== 'string' || reflection.question.length > 240
-        || !Array.isArray(reflection.sources) || reflection.sources.length < 2 || reflection.sources.length > 12
+        || !Array.isArray(reflection.sources) || reflection.sources.length < (reflection.kind === 'brainstorm' ? 1 : 2) || reflection.sources.length > 12
         || reflection.sources.some((source) => !source || typeof source.id !== 'string' || !source.id
           || ['title', 'summary', 'input', 'notes'].some((key) => typeof source[key] !== 'string'))
         || new Set(reflection.sources.map((source) => source.id)).size !== reflection.sources.length) {

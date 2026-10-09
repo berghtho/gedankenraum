@@ -22,6 +22,7 @@ export function roomDigest(room, ideas, reflections = []) {
   };
   for (const idea of members) {
     if (idea.source === 'link') addSource(idea.title, idea.url);
+    for (const url of idea.sourceUrls ?? []) addSource(idea.title, url);
     for (const finding of idea.research?.findings ?? []) for (const source of finding.sources) addSource(source.title, source.url);
     for (const source of idea.researchOrigin?.sources ?? []) addSource(source.title, source.url);
   }

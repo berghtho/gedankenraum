@@ -28,6 +28,7 @@ export const tagCounts = (ideas) => {
 export const byUse = (counts) => [...counts].sort(([, left], [, right]) => right - left);
 
 export const REFLECTION_KINDS = {
+  brainstorm: 'Ideen entwickeln',
   commonalities: 'Gemeinsamkeiten',
   contradictions: 'Widersprüche',
   questions: 'Offene Fragen',

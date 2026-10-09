@@ -70,6 +70,29 @@ trotzdem erzeugt, damit sich die Notiz einordnen und finden lässt. In der Detai
 vollständige Wortlaut mit `KOPIEREN`; die Suche durchsucht auch den Wortlaut. Links werden in diesem
 Fall über `⋯ → Links als Text aufbewahren` nicht gelesen, sondern als Text übernommen.
 
+## Video-Digests
+
+`+ Digest` neben der Eingabe öffnet einen Dokumenteditor. Einen Titel vergeben, den eigenen Digest
+einfügen oder über `Textdatei einfügen` eine `.md`- oder `.txt`-Datei anhängen. Optional lassen sich bis zu
+50 Videolinks hinterlegen, einer pro Zeile. Ein Digest darf bis zu 500.000 Zeichen enthalten und mehrere
+Videos behandeln. Die Videos werden dabei nicht abgerufen; gespeichert wird der eigene Text.
+
+Digests liegen mit den Gedanken in der `ideas.json`. Sie lassen sich bearbeiten, Räumen zuordnen,
+verknüpfen, importieren und aus dem Papierkorb wiederherstellen. `Sammlung → Dokumente → Digests`
+filtert die Ansicht. Die Suche findet den vollständigen Text und die hinterlegten Videolinks.
+
+`Ideen entwickeln` im geöffneten Digest startet eine KI-Auswertung auch mit nur einer Quelle.
+Eine optionale Arbeitsfrage lenkt die Vorschläge. Über die Mehrfachauswahl lassen sich Digests mit
+anderen Gedanken zusammen auswerten. Vorschläge lassen sich als eigene Gedanken übernehmen und
+bleiben mit ihren Quellen verbunden.
+
+Für Auswertungen und Recherchen gehen pro Digest höchstens 12.000 Zeichen Ausgangstext an Codex.
+Bei längeren Dokumenten werden passende Abschnitte anhand der Arbeitsfrage oder der anderen
+ausgewählten Gedanken gesucht. Ohne solche Hinweise werden Abschnitte über das gesamte Dokument
+verteilt ausgewählt. Kürzungen sind sichtbar; der verwendete Quellenstand bleibt an der Auswertung
+gespeichert. Die automatische Einordnung verwendet bis zu 24.000 Zeichen verteilter Auszüge.
+Der vollständige Digest bleibt lokal gespeichert und durchsuchbar.
+
 ## Daten
 
 Standardmäßig liegen alle Gedanken hier:
@@ -107,7 +130,7 @@ Reasoning Effort `xhigh`. Dafür muss die Codex-CLI installiert und über `codex
 sein. Ist Codex nicht verfügbar, wird beim Erfassen sichtbar auf die einfache lokale Analyse zurückgefallen.
 
 Für eine KI-Auswertung werden die ausgewählten Gedanken samt Arbeitsfrage an Codex übertragen.
-Pro Gedanke umfasst der Auszug höchstens 4.000 Zeichen Ausgangstext, 2.000 Zeichen eigene Ergänzungen,
+Pro Gedanke umfasst der Auszug höchstens 4.000 Zeichen Ausgangstext, bei Digests 12.000, sowie 2.000 Zeichen eigene Ergänzungen,
 1.200 Zeichen Zusammenfassung, 160 Zeichen Titel und vier Kernpunkte mit je 240 Zeichen.
 Kürzungen werden angezeigt. Unfertige Auswertungen aus importierten oder zusammengeführten Dateien
 warten auf `ERNEUT VERSUCHEN`; der Import allein startet sie nicht. Bei Links nutzt die Auswertung den gespeicherten Inhalt und liest die

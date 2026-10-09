@@ -20,7 +20,7 @@ const assetTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascri
 const assets = new Map([
   'index.html', 'app.mjs', 'mindmap.mjs', 'thinking-tools.mjs', 'workspace-ui.mjs', 'inline-thought.mjs', 'search.mjs',
   'tag-match.mjs', 'tag-cleanup.mjs', 'thought-kinds.mjs', 'room-summary.mjs', 'storage-ui.mjs', 'git-ui.mjs', 'tag-dialog.mjs',
-  'util.mjs', 'style.css',
+  'util.mjs', 'digest.mjs', 'digest-ui.mjs', 'style.css',
 ].map((name) => [name === 'index.html' ? '/' : `/${name}`, { path: join(sourceHome, name), type: assetTypes[extname(name)] }]));
 
 export function defaultAppDirectory(env = process.env, platform = process.platform) {
@@ -269,7 +269,7 @@ export function createGedankenraumServer({
       pushing = commitAndPush(board.path).finally(() => { pushing = null; });
       return pushing;
     } },
-    { method: 'POST', path: '/api/ideas/execute', auth: true, bodyLimit: 256 * 1024, handler: ({ body }) => board.execute(body) },
+    { method: 'POST', path: '/api/ideas/execute', auth: true, bodyLimit: 4 * 1024 * 1024, handler: ({ body }) => board.execute(body) },
     { method: 'POST', path: '/api/tags/suggest', auth: true, bodyLimit: 16 * 1024, handler: () => {
       if (!analyzer.suggestTagMerges) throw new IdeaBoardValidationError('Tag-Vorschläge sind nicht verfügbar.');
       // Nur Tag-Namen und Häufigkeiten aus der Sammlung gehen an Codex, keine Gedanken.

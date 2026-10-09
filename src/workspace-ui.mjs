@@ -23,6 +23,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
   let resultId = null;
   let draggedId = null;
   let selecting = false;
+  let reflectionRoomId = null;
   let barKey = '';
   const dialog = document.createElement('dialog');
   dialog.className = 'ib-dialog ib-workspace-dialog';
@@ -81,6 +82,15 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
     mode = 'archive';
     shell('Archivierte Arbeitsräume', `<div class="ib-member-list">${snapshot().rooms.filter((room) => room.archivedAt).map((room) => `<div class="ib-archive-row"><span>${html(room.question)}</span><button type="button" class="ib-small-btn" data-room-restore="${html(room.id)}">WIEDERHERSTELLEN</button></div>`).join('') || '<p>Keine archivierten Räume.</p>'}</div>`);
   };
+  const openReflection = (digestId = null) => {
+    if (!canNavigate()) return;
+    if (digestId) { picked.clear(); picked.add(digestId); }
+    mode = 'reflect';
+    const room = currentRoom();
+    reflectionRoomId = room && [...picked].every((id) => room.ideaIds.includes(id)) ? room.id : null;
+    const kind = digestId || picked.size === 1 ? 'brainstorm' : 'commonalities';
+    shell('Zusammen denken', `<p>${picked.size} ${picked.size === 1 ? 'Quelle' : 'Quellen'}. Was möchtest du entwickeln oder herausfinden?</p><label class="ib-dialog-field"><span>Auswertung</span><select name="kind">${Object.entries(REFLECTION_KINDS).map(([id, name]) => `<option value="${id}"${id === kind ? ' selected' : ''}${picked.size < 2 && id !== 'brainstorm' ? ' disabled' : ''}>${html(name)}</option>`).join('')}</select></label><label class="ib-dialog-field"><span>Arbeitsfrage · optional</span><input name="question" maxlength="240" value="${html(reflectionRoomId ? room.question : '')}" placeholder="Welche Ideen ergeben sich für mein Projekt?"></label><p class="ib-dialog-note">Die ausgewählten Texte gehen an Codex. Bei langen Digests werden passende Auszüge aus dem gesamten Dokument gewählt. Eine Arbeitsfrage hilft bei der Auswahl.</p>`, 'Auswerten');
+  };
   // lookup wird je openResults einmal gebaut, statt die Sammlung je Quelle und Befund zu durchsuchen.
   const resultMarkup = (result, { byId, accepted }) => {
     const sourceById = new Map(result.sources.map((source) => [source.id, source]));
@@ -89,7 +99,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
       ${result.question ? `<h3>${html(result.question)}</h3>` : ''}
       <p class="ib-reflection-label">KI-VORSCHLÄGE · ${result.sources.length} GEDANKEN${result.engine ? ` · ${html(result.engine)}` : ''}</p>
       ${changed ? '<p class="ib-reflection-warning">Quellen inzwischen geändert oder im Papierkorb. Die Auswertung bezieht sich auf den gespeicherten Stand.</p>' : ''}
-      ${result.sources.some((source) => source.truncated) ? '<p class="ib-reflection-warning">Lange Texte wurden für diese Auswertung gekürzt.</p>' : ''}
+      ${result.sources.some((source) => source.truncated) ? '<p class="ib-reflection-warning">Lange Texte wurden für diese Auswertung gekürzt. Bei Digests wurden Auszüge aus dem gesamten Dokument ausgewählt.</p>' : ''}
       ${result.status === 'pending' ? '<p role="status">Auswertung läuft im Hintergrund. Du kannst dieses Fenster schließen und weiterarbeiten.</p>' : result.status === 'failed' ? `<p class="ib-reflection-warning">${html(result.error)}</p><button type="button" class="ib-small-btn" data-reflection-retry="${html(result.id)}">ERNEUT VERSUCHEN</button>` : `<p>${html(result.summary)}</p>${result.findings.length ? result.findings.map((finding, index) => {
         const taken = !!accepted.get(result.id)?.has(index);
         return `<section class="ib-finding"><p>${html(finding.text)}</p><div class="ib-finding-sources">${finding.sourceIds.map((id) => `<button type="button" data-source-result="${html(result.id)}" data-source-id="${html(id)}">${html(sourceById.get(id)?.title ?? id)}</button>`).join('')}</div><button type="button" class="ib-small-btn" data-finding-result="${html(result.id)}" data-finding-index="${index}" ${taken ? 'disabled' : ''}>${taken ? 'ALS GEDANKE ÜBERNOMMEN' : 'ALS GEDANKEN ÜBERNEHMEN'}</button></section>`;
@@ -149,7 +159,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
         await command({ type: 'roomMembers', id: data.get('room'), add: [...picked] });
         chooseRoom(data.get('room'));
       } else if (mode === 'reflect') {
-        const result = await command({ type: 'reflect', kind: data.get('kind'), ideaIds: [...picked], roomId: activeId });
+        const result = await command({ type: 'reflect', kind: data.get('kind'), question: data.get('question'), ideaIds: [...picked], roomId: reflectionRoomId });
         resultId = result.reflection.id; openResults(true);
       }
       dialog.close(); render();
@@ -188,10 +198,9 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
   root.addEventListener('click', (event) => {
     const target = event.target;
     if (target.closest('[data-selection-toggle]')) { if (!canNavigate()) return; selecting = !selecting; picked.clear(); if (selecting && selected()) picked.add(selected().id); render(); root.querySelector('[data-pick-id]')?.focus(); }
-    if (target.closest('[data-reflection-open]')) {
-      mode = 'reflect';
-      shell('Zusammen denken', `<p>${picked.size} Gedanken. Was möchtest du entdecken?</p><label class="ib-dialog-field"><span>Auswertung</span><select name="kind">${Object.entries(REFLECTION_KINDS).map(([id, name]) => `<option value="${id}">${html(name)}</option>`).join('')}</select></label><p class="ib-dialog-note">Die ausgewählten Texte werden an Codex übertragen. Ergebnisse bleiben Vorschläge.</p>`, 'Auswerten');
-    }
+    if (target.closest('[data-reflection-open]')) openReflection();
+    const digest = target.closest('[data-digest-brainstorm]');
+    if (digest) openReflection(digest.dataset.digestBrainstorm);
     if (target.closest('[data-results-close]')) { closeResults(); root.querySelector('[data-reflection-open], [data-menu-open]')?.focus(); }
     if (target.closest('[data-workspace-close]')) dialog.close();
     if (target.closest('[data-room-new]')) editRoom();
@@ -277,7 +286,7 @@ export function initWorkspaces({ root, snapshot, command, render, reveal, visibl
       bar.hidden = !selecting && !picked.size;
       const roomIds = room && new Set(room.ideaIds);
       const members = roomIds ? [...picked].filter((id) => roomIds.has(id)).length : 0;
-      const barMarkup = selecting || picked.size ? `<span>${picked.size} ausgewählt</span><button type="button" data-pick-visible>Alle sichtbaren</button>${picked.size && rooms.length ? '<button type="button" data-selection-add>In Raum …</button>' : ''}${members ? '<button type="button" data-selection-remove>Aus Raum entfernen</button>' : ''}<button type="button" data-reflection-open ${picked.size < 2 || picked.size > 12 ? 'disabled' : ''}>Zusammen denken</button>${picked.size > 12 ? '<span>Bitte höchstens 12 Gedanken wählen.</span>' : ''}<button type="button" data-pick-clear aria-label="Auswahl beenden">×</button>` : '';
+      const barMarkup = selecting || picked.size ? `<span>${picked.size} ausgewählt</span><button type="button" data-pick-visible>Alle sichtbaren</button>${picked.size && rooms.length ? '<button type="button" data-selection-add>In Raum …</button>' : ''}${members ? '<button type="button" data-selection-remove>Aus Raum entfernen</button>' : ''}<button type="button" data-reflection-open ${picked.size < 1 || picked.size > 12 ? 'disabled' : ''}>Zusammen denken</button>${picked.size > 12 ? '<span>Bitte höchstens 12 Gedanken wählen.</span>' : ''}<button type="button" data-pick-clear aria-label="Auswahl beenden">×</button>` : '';
       // Die Leiste ist aria-live; nur bei Änderung neu setzen, sonst liest der Screenreader jeden Render vor.
       if (barMarkup !== barKey) { barKey = barMarkup; bar.innerHTML = barMarkup; }
       for (const button of root.querySelectorAll('[data-idea-map] .ib-row, [data-idea-map] .ib-mm-select')) {

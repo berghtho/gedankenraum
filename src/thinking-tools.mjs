@@ -1,5 +1,6 @@
 import { relationLabels } from './mindmap.mjs';
 import { html } from './util.mjs';
+import { textLimit } from './digest.mjs';
 
 export function connectionsMarkup(idea, ideas) {
   const byId = new Map(ideas.map((item) => [item.id, item]));
@@ -37,7 +38,7 @@ export function initThinkingTools({ root, snapshot, selected, command, render, r
     if (!idea) return;
     mode = 'edit'; editing = structuredClone(idea);
     shell('Gedanken bearbeiten', field('title', 'TITEL', idea.title, 160)
-      + (idea.source !== 'link' ? field('input', 'TEXT', idea.input, 60000, true) : `<p>Quelle: ${html(idea.url)}</p>`)
+      + (idea.source !== 'link' ? field('input', 'TEXT', idea.input, textLimit(idea.source), true) : `<p>Quelle: ${html(idea.url)}</p>`)
       + field('summary', 'ZUSAMMENFASSUNG', idea.summary, 1200, true)
       + field('notes', 'EIGENE ERGÄNZUNGEN', idea.notes ?? '', 60000, true)
       + '<p class="ib-dialog-note">Eigene Titel und Zusammenfassungen bleiben erhalten, auch wenn eine Analyse noch läuft.</p>', 'SPEICHERN');

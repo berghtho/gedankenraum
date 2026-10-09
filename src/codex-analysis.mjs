@@ -11,6 +11,7 @@ import { REFLECTION_SCHEMA, reflectionPrompt, validateReflection } from './refle
 import { RESEARCH_SCHEMA, researchPrompt, validateResearch } from './research-analysis.mjs';
 import { TAG_MERGE_SCHEMA, tagMergePrompt, validateTagMerges } from './tag-analysis.mjs';
 import { compact } from './util.mjs';
+import { digestExcerpt } from './digest.mjs';
 
 const exec = promisify(execFile);
 const MODEL = 'gpt-6-sol';
@@ -62,7 +63,8 @@ function promptFor({ input, source, existingTopics, existingTags = [] }) {
     `Bestehende Schlagwörter (häufigste zuerst): ${tags}`,
     `Quelltyp: ${source.kind}${source.url ? ` · ${source.url}` : ''}`,
     `Quellentitel: ${compact(source.pageTitle) || '(nicht vorhanden)'}`,
-    compact(source.text || input).slice(0, 24_000),
+    ...(source.kind === 'digest' ? ['Dies ist ein Digest des Nutzers. Bei langen Dokumenten liegen verteilte Auszüge vor; […] kennzeichnet ausgelassene Abschnitte.'] : []),
+    source.kind === 'digest' ? digestExcerpt(source.text || input, '', 24_000) : compact(source.text || input).slice(0, 24_000),
     `</${boundary}>`,
     'Antworte ausschließlich mit dem verlangten JSON-Objekt.',
   ].join('\n');
