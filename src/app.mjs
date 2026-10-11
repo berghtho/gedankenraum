@@ -7,6 +7,7 @@ import { initStorageDialog } from './storage-ui.mjs';
 import { initGitPush } from './git-ui.mjs';
 import { initTagDialog } from './tag-dialog.mjs';
 import { initDigests } from './digest-ui.mjs';
+import { canRead, initReader } from './reader-ui.mjs';
 import { fold, foldMap, hitsIn, hitsInMap, hostOf, linkKey, markText, matches, pathOf, scoreOf, startsWithTitle, stripTitle, termsOf, topicMatcher, variantsOf, windowAround } from './search.mjs';
 import { isDerived, isQuestion } from './thought-kinds.mjs';
 import { html, isLinkInput, isWebUrl, lower, tagCounts, tagsOf } from './util.mjs';
@@ -95,7 +96,7 @@ const rowMarkup = (idea, selectedId, { color = null, meta = null, terms = [], ta
   ${idea.analysisState === 'pending' ? '<span class="ib-analysis-badge">Analyse läuft …</span>' : idea.analysisState === 'failed' ? '<span class="ib-analysis-badge is-error">Analyse fehlgeschlagen</span>' : ''}
   ${tags ? rowTags(idea) : ''}
   ${meta === null ? '' : `<span class="ib-row-meta">${html(meta)}</span>`}
-</button></article>`;
+</button>${canRead(idea) ? `<button class="ib-reader-open" type="button" tabindex="-1" data-reader-open="${html(idea.id)}" title="Lesen ( l )" aria-label="Lesen: ${html(idea.title)}">Lesen</button>` : ''}</article>`;
 };
 
 function emptyMarkup(hasFilter, hasIdeas, room, query) {
@@ -234,7 +235,7 @@ function researchMarkup(idea, ideas) {
 
 function panelHeadMarkup(idea) {
   const kind = idea ? `${kindLabel(idea.source)} · ${html(relativeDate(idea.createdAt))}` : '';
-  return `<div class="ib-panel-head"><span class="ib-detail-kind">${kind}</span><span class="ib-panel-actions">${idea ? '<button type="button" data-inline-edit>Weiterschreiben</button>' : ''}<button type="button" data-detail-close aria-label="Gedanken schließen">×</button></span></div>`;
+  return `<div class="ib-panel-head"><span class="ib-detail-kind">${kind}</span><span class="ib-panel-actions">${canRead(idea) ? `<button type="button" data-reader-open="${html(idea.id)}" title="Lesen ( l )">Lesen</button>` : ''}${idea ? '<button type="button" data-inline-edit>Weiterschreiben</button>' : ''}<button type="button" data-detail-close aria-label="Gedanken schließen">×</button></span></div>`;
 }
 
 // Der Gedanke steht zuerst in eigenen Worten; Einordnung und Werkzeuge liegen unter „Mehr“.
@@ -573,6 +574,13 @@ export function initGedankenraum({ root, getToken }) {
   const digests = initDigests({ root, command: runCommand, reveal, notify: showMessage, selected,
     canOpen: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
   });
+  // Lesen: ganzer Text als Markdown; bei einer Suche springt der Lesemodus zum ersten Treffer.
+  const reader = initReader({
+    root, find: (id) => ideas.find((idea) => idea.id === id),
+    terms: () => termsOf(parseQuery(searchInput.value).text),
+    edit: (idea) => { if (ideas.some((item) => item.id === idea.id)) { selectedId = idea.id; editInline(selected()); } },
+    canOpen: () => { if (!inline.isEditing()) return true; inline.focus(); return false; },
+  });
   initTagCleanup({ root, snapshot: () => ({ ideas }), request: post, render, notify: showMessage });
   // Nach einem Modellwechsel alles noch einmal analysieren; läuft im Hintergrund und lässt sich abbrechen.
   const reanalyze = async () => {
@@ -720,6 +728,11 @@ export function initGedankenraum({ root, getToken }) {
     if (plain && !inField(event.target) && !q('dialog[open]')) {
       if (event.key === '/') { event.preventDefault(); searchInput.focus(); searchInput.select(); return; }
       if (event.key === 'n' && !event.shiftKey) { event.preventDefault(); captureInput.focus(); return; }
+      // l liest den Gedanken unter dem Fokus, sonst den geöffneten.
+      if (event.key === 'l' && !event.shiftKey) {
+        const id = document.activeElement?.closest?.('[data-idea-id]')?.dataset.ideaId ?? (detailOpen ? selectedId : null);
+        if (id) { event.preventDefault(); reader.open(id); return; }
+      }
     }
     if (event.key !== 'Escape' || event.target === captureInput) return;
     if (!menuList.hidden) closeMenu();

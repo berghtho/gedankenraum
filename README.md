@@ -17,6 +17,8 @@ unter `Mehr`. `Weiterschreiben`, Doppelklick oder F2 öffnet einen Editor direkt
 Strg+Enter, Verwerfen mit Escape. Escape schließt den geöffneten Gedanken; ein zweites Escape hebt die
 Auswahl auf.
 
+`Lesen` öffnet Notizen und Digests im Lesemodus: der ganze Text auf einer großen Seite, als Markdown dargestellt (Überschriften, Listen, Tabellen, Code, Links). Der Knopf erscheint auf der Karte beim Darüberfahren und oben im geöffneten Gedanken; `l` liest den Gedanken unter dem Fokus. Ab drei Überschriften gibt es links ein Inhaltsverzeichnis. Läuft eine Suche, springt der Lesemodus zum ersten Treffer; ↑/↓, F3 oder Enter wechseln zwischen den Treffern. Die Leseposition bleibt bis zum Schließen des Tabs erhalten. Roh-HTML wird als Text gezeigt, Bilder werden nicht geladen, Links nur für http(s).
+
 Die Suche durchsucht immer die ganze Sammlung: Titel, Wortlaut, Zusammenfassung, Ergänzungen, Tags und
 Schlagwörter. Jeder Begriff muss vorkommen, die Reihenfolge ist egal; „huette“, „hutte“ und „Hütte“ finden
 dasselbe. Karten zeigen die Stelle, an der es passt, und markieren den Treffer; Titeltreffer stehen vor
