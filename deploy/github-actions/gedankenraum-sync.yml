@@ -1,0 +1,48 @@
+# Vorlage für das Daten-Repository (das mit ideas.json), dort als .github/workflows/gedankenraum-sync.yml.
+# Übernimmt den Digest-Eingang inbox/ ohne laufende App und pusht ideas.json. Analysiert wird hier nicht,
+# es braucht also keinen Codex-Zugang: Das macht Gedankenraum beim nächsten Start mit dem lokalen Codex.
+# Läuft täglich, sobald eine Datei nach inbox/ gepusht wird, und von Hand über „Run workflow“.
+name: Gedankenraum-Sync
+
+on:
+  schedule:
+    - cron: '30 5 * * *'
+  push:
+    paths: ['inbox/*.json']
+  workflow_dispatch:
+
+# Nie zwei Läufe gleichzeitig: Beide würden ideas.json schreiben.
+concurrency:
+  group: gedankenraum-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: berghtho/gedankenraum
+          path: .gedankenraum-app
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: |
+          git config user.name 'Gedankenraum-Sync'
+          git config user.email 'gedankenraum-sync@users.noreply.github.com'
+      - name: Digest-Eingang verarbeiten
+        env:
+          GEDANKENRAUM_HOME: ${{ github.workspace }}
+          GEDANKENRAUM_INBOX: ${{ github.workspace }}/inbox
+        run: node .gedankenraum-app/src/sync.mjs --ohne-analyse
+      # Erst nach erfolgreichem Push von ideas.json: Verschobene Dateien (done/, failed/) und den Bericht festhalten.
+      # Schlägt ein Lauf fehl, bleiben die Dateien in inbox/ und der nächste Lauf versucht es erneut.
+      - name: Eingang festhalten
+        run: |
+          git add -A inbox
+          git diff --cached --quiet || { git commit -m 'Gedankenraum: Digest-Eingang verarbeitet' && git push; }

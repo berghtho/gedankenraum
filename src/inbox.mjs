@@ -1,5 +1,5 @@
 import { watch } from 'node:fs';
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,8 +9,11 @@ import { atomicReplaceText } from './atomic-file.mjs';
 // Gedankenraum übernimmt sie beim Start und, solange es läuft, sobald sie erscheinen:
 // erst holen (Fast-Forward), dann übernehmen, nach der Analyse ideas.json pushen.
 // Verarbeitete Dateien wandern nach done/, ungültige nach failed/; nichts wird gelöscht.
+// Scheitert der Push, merkt sich der Eingang das in .push-pending und versucht es beim nächsten Lauf erneut,
+// auch wenn keine neue Datei kommt.
 export const INBOX_FORMAT = 'gedankenraum-inbox';
 const SETTLE_MS = 10_000;
+const PUSH_PENDING = '.push-pending';
 
 export function defaultInboxDirectory(env = process.env) {
   if (env.GEDANKENRAUM_INBOX) return resolve(env.GEDANKENRAUM_INBOX);
@@ -64,9 +67,12 @@ export function createInbox({
     return names.filter((name) => /\.json$/i.test(name) && !name.startsWith('.')).sort();
   }
 
+  const marker = () => join(directory, PUSH_PENDING);
+
   async function processOnce() {
     const names = await pending();
-    if (!names.length) return null;
+    const retry = await stat(marker()).then(() => true, () => false);
+    if (!names.length && !retry) return null;
     const report = { at: new Date(now()).toISOString(), pull: null, entries: [], push: null };
     // Holen läuft in der Warteschlange der Sammlung, damit keine Analyse gleichzeitig schreibt.
     report.pull = await board.exclusive(() => pull(board.path)).catch((error) => ({ error: error.message }));
@@ -96,7 +102,7 @@ export function createInbox({
         log(`Digest nicht übernommen (${name}): ${error.message}`);
       }
     }
-    if (imported.length) {
+    if (imported.length || retry) {
       // Erst nach der Analyse pushen, damit Titel, Thema und Zusammenfassung mitgehen; notfalls ohne sie.
       // Beim Beenden wird nicht auf die Analyse gewartet; dann bleibt PUSH im Menü.
       let timeout;
@@ -108,6 +114,13 @@ export function createInbox({
       report.push = stopped
         ? { skipped: 'Gedankenraum wurde beendet, bevor gepusht wurde.' }
         : await push(board.path).catch((error) => ({ error: error.message }));
+      if (report.push.error || report.push.skipped) {
+        await mkdir(directory, { recursive: true }).catch(() => {});
+        await writeFile(marker(), `${report.at}
+`, 'utf8').catch(() => {});
+      } else {
+        await rm(marker(), { force: true }).catch(() => {});
+      }
     }
     try {
       await mkdir(directory, { recursive: true });
@@ -131,11 +144,19 @@ export function createInbox({
   return {
     directory,
     scan,
+    // Beim nächsten Lauf pushen, auch ohne neue Datei.
+    async requestPush() {
+      await mkdir(directory, { recursive: true });
+      await writeFile(marker(), `${new Date(now()).toISOString()}
+`, 'utf8');
+    },
     async start({ interval = 60_000 } = {}) {
       await mkdir(directory, { recursive: true }).catch(() => {});
       try {
         let debounce = null;
-        watcher = watch(directory, () => {
+        // Eigene Dateien mit führendem Punkt (Bericht, Push-Merker) lösen keinen neuen Lauf aus.
+        watcher = watch(directory, (event, name) => {
+          if (String(name ?? '').startsWith('.')) return;
           clearTimeout(debounce);
           debounce = setTimeout(scan, 1_000);
           debounce.unref?.();

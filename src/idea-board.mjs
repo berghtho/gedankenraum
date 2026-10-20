@@ -107,6 +107,8 @@ export class IdeaBoard {
     reflect = async () => { throw new Error('KI-Auswertung ist nicht verfügbar. Bitte Codex anmelden.'); },
     research = async () => { throw new Error('KI-Recherche ist nicht verfügbar. Bitte Codex anmelden.'); },
     now = () => new Date(), makeId = randomUUID,
+    // Aus, wenn ein anderer die Analyse übernimmt, etwa die App nach einem Sync ohne Analyse.
+    backgroundAnalysis = true,
   }) {
     if (!path || typeof path !== 'string') throw new TypeError('IdeaBoard requires a state path');
     if (typeof analyze !== 'function') throw new TypeError('IdeaBoard requires an analyzer');
@@ -126,6 +128,7 @@ export class IdeaBoard {
     this.writes = 0;
     this.cache = null;
     this.stopped = false;
+    this.backgroundAnalysis = backgroundAnalysis;
   }
 
   // Ändert sich bei jedem eigenen Schreiben und wenn die Datei von außen ersetzt wird.
@@ -337,6 +340,7 @@ export class IdeaBoard {
   }
 
   resumeAnalysis() {
+    if (!this.backgroundAnalysis) return;
     for (const name of Object.keys(this.lanes)) this.#startLane(name);
   }
 

@@ -118,7 +118,24 @@ zuerst `ideas.json` per Fast-Forward holen, dann jede Datei als Digest speichern
 mitgehen, wird nicht automatisch gepusht; dann bleibt `PUSH` im Menü. Übernommene Dateien wandern nach
 `done\`, ungültige nach `failed\`; gelöscht wird nichts. Ein Digest mit gleichem Titel und Text wird nicht
 doppelt angelegt. Dateien zuerst unter einem Namen mit führendem Punkt schreiben und dann umbenennen;
-solche Dateien werden ignoriert. Das Ergebnis des letzten Laufs steht in `.last-run.json`.
+solche Dateien werden ignoriert. Das Ergebnis des letzten Laufs steht in `.last-run.json`. Scheitert der
+Push, merkt sich der Eingang das in `.push-pending` und versucht es beim nächsten Lauf erneut, auch ohne
+neue Datei.
+
+### Sync ohne laufende App
+
+`npm run sync` (oder `node src/sync.mjs`) verarbeitet den Digest-Eingang einmal und beendet sich: holen,
+übernehmen, analysieren, `ideas.json` pushen. Mit `--ohne-analyse` wird nur übernommen und gepusht.
+Läuft Gedankenraum bereits, bleibt der Eingang der App überlassen. Der Exit-Code ist 1, wenn eine Datei
+nicht übernommen oder nicht gepusht wurde.
+
+So nimmt GitHub Actions Digests an, ohne dass der eigene Rechner läuft und ohne Codex-Zugang auf GitHub:
+`deploy/github-actions/gedankenraum-sync.yml` liegt im Daten-Repository unter `.github/workflows/`, der
+Eingang ist dort der Ordner `inbox/`. Der Workflow läuft bei jedem Push nach `inbox/`, täglich um 5:30 UTC
+und von Hand, übernimmt die Digests ohne Analyse und pusht. Beim nächsten Start holt Gedankenraum sie,
+analysiert sie mit dem lokalen Codex und pusht danach selbst. Wie ein geplanter Job Digests ablegt, steht in
+`docs/digest-scheduler.md`. Die lokale App sollte ihre Änderungen pushen, sonst kann sie beim Start nicht
+per Fast-Forward aktualisieren.
 
 ## Daten
 

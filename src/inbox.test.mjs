@@ -58,6 +58,25 @@ test('an empty inbox neither pulls nor pushes', async () => {
   assert.equal(touched, false);
 });
 
+test('a failed push is retried on the next run even without new files', async () => {
+  const data = temp('retry');
+  const inboxDir = join(data, 'inbox');
+  const results = [{ error: 'offline' }, { pushed: true }];
+  const pushes = [];
+  const inbox = createInbox({ board: boardFor(data), directory: inboxDir, push: async () => { pushes.push(results[pushes.length]); return pushes.at(-1); } });
+  await dropDigest(inboxDir, 'digest.json', digest);
+  assert.equal((await inbox.scan()).push.error, 'offline');
+  assert.ok(existsSync(join(inboxDir, '.push-pending')), 'the failed push is remembered');
+  assert.deepEqual(readdirSync(join(inboxDir, 'done')), ['digest.json']);
+
+  const retry = await inbox.scan();
+  assert.equal(retry.push.pushed, true);
+  assert.deepEqual(retry.entries, []);
+  assert.equal(existsSync(join(inboxDir, '.push-pending')), false);
+  assert.equal(await inbox.scan(), null, 'after a successful push the empty inbox is quiet again');
+  assert.equal(pushes.length, 2);
+});
+
 test('invalid files go to failed/, half-written files wait, temporary files are ignored', async () => {
   const data = temp('invalid');
   const inboxDir = join(data, 'inbox');
