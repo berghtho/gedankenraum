@@ -40,7 +40,8 @@ jobs:
           GEDANKENRAUM_HOME: ${{ github.workspace }}
           GEDANKENRAUM_INBOX: ${{ github.workspace }}/inbox
         run: node .gedankenraum-app/src/sync.mjs --ohne-analyse
-      # Erst nach erfolgreichem Push von ideas.json: Verschobene Dateien (done/, failed/) und den Bericht festhalten.
+      # Erst nach erfolgreichem Push von ideas.json: Verschobene Dateien (done/, failed/), in done/ aufgeräumte
+      # Dateien früherer Läufe und den Bericht festhalten.
       # Schlägt ein Lauf fehl, bleiben die Dateien in inbox/ und der nächste Lauf versucht es erneut.
       - name: Eingang festhalten
         run: |

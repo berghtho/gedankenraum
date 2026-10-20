@@ -33,4 +33,5 @@ Zugang: ein Fine-grained Token nur für `berghtho/work` mit „Contents: Read an
 ## Prüfen
 
 Auf GitHub unter `berghtho/work` → Actions → „Gedankenraum-Sync“ ist der Lauf grün, die Datei liegt
-danach in `inbox/done/`.
+danach in `inbox/done/`. Beim nächsten Lauf wird sie dort gelöscht, weil ihr Digest dann gepusht in
+`ideas.json` steht; in der Git-Historie bleibt sie erhalten.

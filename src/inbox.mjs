@@ -8,7 +8,7 @@ import { atomicReplaceText } from './atomic-file.mjs';
 // Digest-Eingang: Andere Programme (etwa ein geplanter Agent) legen Digests als JSON-Dateien in einen Ordner.
 // Gedankenraum übernimmt sie beim Start und, solange es läuft, sobald sie erscheinen:
 // erst holen (Fast-Forward), dann übernehmen, nach der Analyse ideas.json pushen.
-// Verarbeitete Dateien wandern nach done/, ungültige nach failed/; nichts wird gelöscht.
+// Verarbeitete Dateien wandern nach done/, ungültige nach failed/. Gelöscht wird nur über pruneDone().
 // Scheitert der Push, merkt sich der Eingang das in .push-pending und versucht es beim nächsten Lauf erneut,
 // auch wenn keine neue Datei kommt.
 export const INBOX_FORMAT = 'gedankenraum-inbox';
@@ -34,6 +34,47 @@ export function inboxCommand(entry) {
 
 const sameDigest = (idea, command) => !idea.deletedAt && idea.source === 'digest'
   && idea.title === command.title.trim().replace(/\s+/g, ' ') && idea.input === command.input.replace(/\r\n?/g, '\n').trim();
+
+// Dateien in done/, die schon vor einem Lauf dort lagen; pruneDone() räumt nur solche auf.
+export async function listDone(directory) {
+  try {
+    return (await readdir(join(directory, 'done'))).filter((name) => /\.json$/i.test(name) && !name.startsWith('.')).sort();
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+// Eine Datei in done/ ist überholt, wenn ihr Digest in ideas.json steht (auch im Papierkorb) und dieser Stand
+// gepusht ist (isPublished). Dann liegt der Inhalt doppelt vor, die Datei bleibt in der Git-Historie.
+// Unlesbare Dateien und Digests, die in ideas.json fehlen, bleiben liegen; failed/ wird nie angefasst.
+export async function pruneDone({ board, directory, names, isPublished = async () => true }) {
+  const result = { pruned: [], kept: [] };
+  if (!names?.length) return result;
+  const state = board.snapshot();
+  const all = [...state.ideas, ...state.trash];
+  const obsolete = [];
+  for (const name of names) {
+    try {
+      const command = inboxCommand(JSON.parse(await readFile(join(directory, 'done', name), 'utf8')));
+      if (all.some((idea) => sameDigest({ ...idea, deletedAt: null }, command))) obsolete.push(name);
+      else result.kept.push({ file: name, reason: 'nicht in ideas.json' });
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      result.kept.push({ file: name, reason: error.message });
+    }
+  }
+  if (!obsolete.length) return result;
+  if (!(await isPublished())) {
+    result.kept.push(...obsolete.map((file) => ({ file, reason: 'ideas.json ist noch nicht gepusht' })));
+    return result;
+  }
+  for (const name of obsolete) {
+    await rm(join(directory, 'done', name), { force: true });
+    result.pruned.push(name);
+  }
+  return result;
+}
 
 async function moveTo(directory, folder, name) {
   const target = join(directory, folder);

@@ -116,7 +116,7 @@ Läuft Gedankenraum, übernimmt es neue Dateien nach wenigen Sekunden, sonst bei
 zuerst `ideas.json` per Fast-Forward holen, dann jede Datei als Digest speichern, nach der Analyse (höchstens
 15 Minuten Wartezeit) `ideas.json` committen und pushen, wie mit `PUSH` im Menü. Würden dabei fremde Commits
 mitgehen, wird nicht automatisch gepusht; dann bleibt `PUSH` im Menü. Übernommene Dateien wandern nach
-`done\`, ungültige nach `failed\`; gelöscht wird nichts. Ein Digest mit gleichem Titel und Text wird nicht
+`done\`, ungültige nach `failed\`. Die App selbst löscht nichts. Ein Digest mit gleichem Titel und Text wird nicht
 doppelt angelegt. Dateien zuerst unter einem Namen mit führendem Punkt schreiben und dann umbenennen;
 solche Dateien werden ignoriert. Das Ergebnis des letzten Laufs steht in `.last-run.json`. Scheitert der
 Push, merkt sich der Eingang das in `.push-pending` und versucht es beim nächsten Lauf erneut, auch ohne
@@ -128,6 +128,12 @@ neue Datei.
 übernehmen, analysieren, `ideas.json` pushen. Mit `--ohne-analyse` wird nur übernommen und gepusht.
 Läuft Gedankenraum bereits, bleibt der Eingang der App überlassen. Der Exit-Code ist 1, wenn eine Datei
 nicht übernommen oder nicht gepusht wurde.
+
+Danach räumt der Sync `done\` auf: Dateien aus früheren Läufen, deren Digest in `ideas.json` steht (auch im
+Papierkorb), werden gelöscht, sobald dieser Stand gepusht ist. Die Dateien des aktuellen Laufs bleiben bis zum
+nächsten Lauf sichtbar; was in `ideas.json` fehlt oder nicht lesbar ist, bleibt liegen, `failed\` bleibt
+unberührt. In einem Git-Repository bleiben gelöschte Dateien in der Historie. `--done-behalten` schaltet das
+Aufräumen ab.
 
 So nimmt GitHub Actions Digests an, ohne dass der eigene Rechner läuft und ohne Codex-Zugang auf GitHub:
 `deploy/github-actions/gedankenraum-sync.yml` liegt im Daten-Repository unter `.github/workflows/`, der
