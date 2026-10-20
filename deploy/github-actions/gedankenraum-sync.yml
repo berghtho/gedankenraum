@@ -44,5 +44,6 @@ jobs:
       # Schlägt ein Lauf fehl, bleiben die Dateien in inbox/ und der nächste Lauf versucht es erneut.
       - name: Eingang festhalten
         run: |
+          [ -d inbox ] || exit 0
           git add -A inbox
           git diff --cached --quiet || { git commit -m 'Gedankenraum: Digest-Eingang verarbeitet' && git push; }
