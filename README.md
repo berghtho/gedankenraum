@@ -125,24 +125,17 @@ neue Datei.
 ### Sync ohne laufende App
 
 `npm run sync` (oder `node src/sync.mjs`) verarbeitet den Digest-Eingang einmal und beendet sich: holen,
-übernehmen, analysieren, `ideas.json` pushen. Läuft Gedankenraum bereits, bleibt der Eingang der App
-überlassen. Der Exit-Code ist 1, wenn eine Datei nicht übernommen oder nicht gepusht wurde.
+übernehmen, analysieren, `ideas.json` pushen. Mit `--ohne-analyse` wird nur übernommen und gepusht.
+Läuft Gedankenraum bereits, bleibt der Eingang der App überlassen. Der Exit-Code ist 1, wenn eine Datei
+nicht übernommen oder nicht gepusht wurde.
 
-Damit lässt sich der Sync täglich in GitHub Actions ausführen, ohne dass der eigene Rechner läuft:
-
-1. `deploy/github-actions/gedankenraum-sync.yml` ins Daten-Repository (das mit der `ideas.json`) nach
-   `.github/workflows/` kopieren. Der Eingang ist dort der Ordner `inbox/`.
-2. Ein Secret für Codex anlegen: `OPENAI_API_KEY` (empfohlen, wird nach Verbrauch abgerechnet) oder
-   `CODEX_AUTH_JSON` mit dem Inhalt von `~/.codex/auth.json` einer eigenen `codex login`-Anmeldung. Diese
-   Anmeldung erneuert sich in Actions nicht und muss gelegentlich neu hinterlegt werden. Ohne Secret wird
-   nur lokal analysiert.
-3. Digests als JSON-Datei nach `inbox/` pushen, per `git push` oder über die GitHub-API, etwa
-   `gh api -X PUT repos/<besitzer>/<repo>/contents/inbox/2026-10-20.json -f message='Digest' -f content="$(base64 -w0 digest.json)"`.
-
-Der Workflow läuft bei jedem Push nach `inbox/`, täglich um 5:30 UTC und von Hand. Er pusht `ideas.json`
-und danach die verschobenen Eingangsdateien. Schlägt ein Lauf fehl, bleiben die Dateien liegen und der
-nächste Lauf versucht es erneut; doppelte Digests entstehen dabei nicht. Wichtig: Die lokale App sollte
-ihre Änderungen vorher pushen, sonst kann sie beim Start nicht per Fast-Forward aktualisieren.
+So nimmt GitHub Actions Digests an, ohne dass der eigene Rechner läuft und ohne Codex-Zugang auf GitHub:
+`deploy/github-actions/gedankenraum-sync.yml` liegt im Daten-Repository unter `.github/workflows/`, der
+Eingang ist dort der Ordner `inbox/`. Der Workflow läuft bei jedem Push nach `inbox/`, täglich um 5:30 UTC
+und von Hand, übernimmt die Digests ohne Analyse und pusht. Beim nächsten Start holt Gedankenraum sie,
+analysiert sie mit dem lokalen Codex und pusht danach selbst. Wie ein geplanter Job Digests ablegt, steht in
+`docs/digest-scheduler.md`. Die lokale App sollte ihre Änderungen pushen, sonst kann sie beim Start nicht
+per Fast-Forward aktualisieren.
 
 ## Daten
 

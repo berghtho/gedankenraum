@@ -9,7 +9,9 @@ import { claimInstance, configuredStatePath, createGitInbox, defaultAppDirectory
 
 // Sync ohne Oberfläche, etwa als geplanter Job in GitHub Actions: einmal den Digest-Eingang verarbeiten
 // (holen, übernehmen, analysieren, pushen) und beenden. Läuft Gedankenraum schon, übernimmt es den Eingang selbst.
+// Mit analyse: false werden Digests nur übernommen und gepusht; analysiert sie die App beim nächsten Start.
 export async function syncOnce({
+  analyse = true,
   statePath = configuredStatePath(),
   inboxDirectory = defaultInboxDirectory(),
   analyzer = createCodexAnalyzer(),
@@ -19,7 +21,7 @@ export async function syncOnce({
 } = {}) {
   const instance = await claimInstance(lockPath);
   if (instance.existing) return { running: true };
-  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, research: analyzer.research, readLink });
+  const board = new IdeaBoard({ path: statePath, analyze: analyzer.analyze, reflect: analyzer.reflect, research: analyzer.research, readLink, backgroundAnalysis: analyse });
   const inbox = createGitInbox({ board, directory: inboxDirectory, log });
   try {
     const report = await inbox.scan();
@@ -47,7 +49,8 @@ export function syncProblems(report) {
 
 const isMain = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 if (isMain) {
-  syncOnce().then(({ running, report, warnings = [] }) => {
+  const analyse = !process.argv.includes('--ohne-analyse');
+  syncOnce({ analyse, ...(analyse ? {} : { analyzer: { analyze: async () => { throw new Error('Analyse ist aus'); } } }) }).then(({ running, report, warnings = [] }) => {
     if (running) return console.log('Gedankenraum läuft bereits und verarbeitet den Digest-Eingang selbst.');
     if (!report) return console.log('Digest-Eingang ist leer.');
     for (const warning of warnings) console.log(`Warnung: ${warning}`);

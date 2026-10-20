@@ -353,7 +353,11 @@ export function createGedankenraumServer({
       expectedOrigin = origin;
       expectedHost = new URL(origin).host;
       board.resumeAnalysis();
-      inbox?.start().catch((error) => console.log(`Digest-Eingang: ${error.message}`));
+      // Kamen beim Holen Digests ohne Analyse (Sync in GitHub Actions), wird nach ihrer Analyse gepusht.
+      const unanalysed = update?.pulled && board.snapshot().ideas.some((idea) => !idea.deletedAt && idea.analysisState === 'pending');
+      Promise.resolve(unanalysed && inbox?.requestPush())
+        .then(() => inbox?.start())
+        .catch((error) => console.log(`Digest-Eingang: ${error.message}`));
     },
   };
 }

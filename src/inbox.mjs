@@ -144,6 +144,12 @@ export function createInbox({
   return {
     directory,
     scan,
+    // Beim nächsten Lauf pushen, auch ohne neue Datei.
+    async requestPush() {
+      await mkdir(directory, { recursive: true });
+      await writeFile(marker(), `${new Date(now()).toISOString()}
+`, 'utf8');
+    },
     async start({ interval = 60_000 } = {}) {
       await mkdir(directory, { recursive: true }).catch(() => {});
       try {

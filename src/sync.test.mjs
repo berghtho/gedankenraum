@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { dropDigest } from './inbox.mjs';
 import { createLocalAnalyzer } from './local-analysis.mjs';
-import { claimInstance } from './server.mjs';
+import { claimInstance, createGedankenraumServer } from './server.mjs';
 import { syncOnce, syncProblems } from './sync.mjs';
 
 const temp = (name) => mkdtempSync(join(tmpdir(), `gedankenraum-sync-${name}-`));
@@ -43,6 +43,38 @@ test('a headless sync imports the inbox, analyses, pushes ideas.json and release
 
   // Die Sperre ist wieder frei; ein zweiter Lauf findet einen leeren Eingang.
   assert.deepEqual(await syncOnce({ statePath: join(base, 'runner', 'ideas.json'), inboxDirectory, analyzer: createLocalAnalyzer(), lockPath, log: () => {} }), { report: null, warnings: [] });
+});
+
+test('without analysis the sync pushes pending digests, and the app analyses and pushes them after its next pull', async () => {
+  Object.assign(process.env, gitEnv);
+  const base = temp('defer');
+  const seed = join(base, 'seed');
+  git(base, 'init', '-b', 'main', seed);
+  writeFileSync(join(seed, 'ideas.json'), '{"version":1,"ideas":[]}\n');
+  git(seed, 'add', '.'); git(seed, 'commit', '-m', 'Start');
+  git(base, 'clone', '--bare', seed, join(base, 'remote.git'));
+  git(base, 'clone', join(base, 'remote.git'), join(base, 'runner'));
+  git(base, 'clone', join(base, 'remote.git'), join(base, 'laptop'));
+  const inboxDirectory = join(base, 'runner', 'inbox');
+  await dropDigest(inboxDirectory, 'digest.json', digest);
+  let analysed = 0;
+  const refuse = { analyze: async () => { analysed += 1; throw new Error('aus'); } };
+  const { report } = await syncOnce({ analyse: false, statePath: join(base, 'runner', 'ideas.json'), inboxDirectory, analyzer: refuse, lockPath: join(base, 'runner-lock.json'), log: () => {} });
+  assert.equal(report.push.pushed, true, JSON.stringify(report));
+  assert.equal(analysed, 0);
+
+  // Die App auf dem Laptop holt beim Start, analysiert mit dem lokalen Codex und pusht danach.
+  git(join(base, 'laptop'), 'pull', '--ff-only');
+  assert.equal(JSON.parse(readFileSync(join(base, 'laptop', 'ideas.json'), 'utf8')).ideas[0].analysisState, 'pending');
+  const app = createGedankenraumServer({ statePath: join(base, 'laptop', 'ideas.json'), settingsPath: join(base, 'settings.json'), token: 't', analyzer: createLocalAnalyzer(), inboxDirectory: join(base, 'laptop-inbox'), update: { pulled: 1 } });
+  try {
+    app.setOrigin('http://127.0.0.1:1');
+    for (let tries = 0; tries < 100 && !existsSync(join(base, 'laptop-inbox', '.last-run.json')); tries += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    const run = JSON.parse(readFileSync(join(base, 'laptop-inbox', '.last-run.json'), 'utf8'));
+    assert.equal(run.push.pushed, true, JSON.stringify(run));
+  } finally { await app.inbox.stop(); }
+  git(base, 'clone', join(base, 'remote.git'), join(base, 'check'));
+  assert.equal(JSON.parse(readFileSync(join(base, 'check', 'ideas.json'), 'utf8')).ideas[0].analysisState, 'ready');
 });
 
 test('a headless sync leaves the inbox to a running Gedankenraum', async () => {
