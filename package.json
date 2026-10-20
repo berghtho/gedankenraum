@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs --open",
+    "sync": "node src/sync.mjs",
     "test": "node --test \"src/*.test.mjs\""
   }
 }

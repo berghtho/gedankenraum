@@ -182,6 +182,24 @@ export async function claimInstance(lockPath) {
   throw new Error('Die vorhandene Gedankenraum-Instanz konnte nicht geprüft werden.');
 }
 
+// Digest-Eingang mit Git: vorher holen, nachher pushen. Automatisch wird nur gepusht, wenn keine fremden
+// Commits mitgingen; sonst bleibt PUSH im Menü. Gemeinsam für den Server und den Sync ohne Oberfläche (sync.mjs).
+export function createGitInbox({ board, directory, push = () => commitAndPush(board.path), log = (message) => console.log(message) }) {
+  return createInbox({
+    board,
+    directory,
+    pull: (path) => pullFastForward(path, 15_000),
+    push: async (path) => {
+      const status = await gitStatus(path);
+      if (!status.available) return { skipped: status.reason };
+      if (status.foreign) return { skipped: `${status.foreign} fremde Commit(s) würden mitgepusht; bitte über PUSH im Menü.` };
+      const result = await push();
+      return { pushed: result.pushed, branch: result.branch, upstream: result.upstream };
+    },
+    log,
+  });
+}
+
 export function createGedankenraumServer({
   statePath = defaultStatePath(),
   token = randomBytes(24).toString('hex'),
@@ -203,20 +221,7 @@ export function createGedankenraumServer({
     if (!pushing) pushing = commitAndPush(board.path).finally(() => { pushing = null; });
     return pushing;
   };
-  // Automatisch wird nur gepusht, wenn keine fremden Commits mitgingen; sonst bleibt PUSH im Menü.
-  const inbox = inboxDirectory ? createInbox({
-    board,
-    directory: inboxDirectory,
-    pull: (path) => pullFastForward(path, 15_000),
-    push: async (path) => {
-      const status = await gitStatus(path);
-      if (!status.available) return { skipped: status.reason };
-      if (status.foreign) return { skipped: `${status.foreign} fremde Commit(s) würden mitgepusht; bitte über PUSH im Menü.` };
-      const result = await push();
-      return { pushed: result.pushed, branch: result.branch, upstream: result.upstream };
-    },
-    log: (message) => console.log(message),
-  }) : null;
+  const inbox = inboxDirectory ? createGitInbox({ board, directory: inboxDirectory, push }) : null;
 
   const guard = (req) => {
     if (req.headers.origin !== expectedOrigin) return 'Anfrage stammt nicht aus Gedankenraum.';

@@ -1,0 +1,62 @@
+# Vorlage für das Daten-Repository (das mit ideas.json), dort als .github/workflows/gedankenraum-sync.yml.
+# Verarbeitet den Digest-Eingang inbox/ ohne laufende App: holen, übernehmen, analysieren, ideas.json pushen.
+# Läuft täglich, sobald eine Datei nach inbox/ gepusht wird, und von Hand über „Run workflow“.
+# Anmeldung für Codex über eines der Secrets OPENAI_API_KEY (empfohlen) oder CODEX_AUTH_JSON; ohne beide
+# fällt die Analyse sichtbar auf die einfache lokale Analyse zurück.
+name: Gedankenraum-Sync
+
+on:
+  schedule:
+    - cron: '30 5 * * *'
+  push:
+    paths: ['inbox/*.json']
+  workflow_dispatch:
+
+# Nie zwei Läufe gleichzeitig: Beide würden ideas.json schreiben.
+concurrency:
+  group: gedankenraum-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: berghtho/gedankenraum
+          path: .gedankenraum-app
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --global @openai/codex
+      - name: Codex anmelden
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            printenv OPENAI_API_KEY | codex login --with-api-key
+          elif [ -n "$CODEX_AUTH_JSON" ]; then
+            mkdir -p ~/.codex && printenv CODEX_AUTH_JSON > ~/.codex/auth.json && chmod 600 ~/.codex/auth.json
+          else
+            echo "::warning::Kein Codex-Secret gesetzt, es wird nur lokal analysiert."
+          fi
+      - run: |
+          git config user.name 'Gedankenraum-Sync'
+          git config user.email 'gedankenraum-sync@users.noreply.github.com'
+      - name: Digest-Eingang verarbeiten
+        env:
+          GEDANKENRAUM_HOME: ${{ github.workspace }}
+          GEDANKENRAUM_INBOX: ${{ github.workspace }}/inbox
+        run: node .gedankenraum-app/src/sync.mjs
+      # Erst nach erfolgreichem Push von ideas.json: Verschobene Dateien (done/, failed/) und den Bericht festhalten.
+      # Schlägt ein Lauf fehl, bleiben die Dateien in inbox/ und der nächste Lauf versucht es erneut.
+      - name: Eingang festhalten
+        run: |
+          git add -A inbox
+          git diff --cached --quiet || { git commit -m 'Gedankenraum: Digest-Eingang verarbeitet' && git push; }
