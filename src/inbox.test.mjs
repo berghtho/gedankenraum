@@ -135,8 +135,9 @@ test('the running server pulls a newer remote ideas.json first, adds the dropped
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${app.server.address().port}`;
   try {
-    app.setOrigin(origin);
+    // Erst ablegen, dann starten: Sonst kann der Startlauf den noch leeren Eingang sehen.
     await dropDigest(inboxDir, 'digest.json', digest);
+    app.setOrigin(origin);
     const report = await app.inbox.scan();
     assert.equal(report.entries[0]?.status, 'imported', JSON.stringify(report));
     assert.equal(report.pull.pulled, 1);

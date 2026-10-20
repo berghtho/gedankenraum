@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { dropDigest } from './inbox.mjs';
@@ -42,7 +42,71 @@ test('a headless sync imports the inbox, analyses, pushes ideas.json and release
   assert.equal(idea.analysisState, 'ready');
 
   // Die Sperre ist wieder frei; ein zweiter Lauf findet einen leeren Eingang.
-  assert.deepEqual(await syncOnce({ statePath: join(base, 'runner', 'ideas.json'), inboxDirectory, analyzer: createLocalAnalyzer(), lockPath, log: () => {} }), { report: null, warnings: [] });
+  // Er räumt dabei die Datei des ersten Laufs aus done/ auf, denn ihr Digest ist gepusht.
+  const second = await syncOnce({ statePath: join(base, 'runner', 'ideas.json'), inboxDirectory, analyzer: createLocalAnalyzer(), lockPath, log: () => {} });
+  assert.equal(second.report, null);
+  assert.deepEqual(second.cleanup, { pruned: ['digest.json'], kept: [] });
+  assert.equal(existsSync(join(inboxDirectory, 'done', 'digest.json')), false);
+});
+
+const repositoryWithRunner = (name) => {
+  Object.assign(process.env, gitEnv);
+  const base = temp(name);
+  const seed = join(base, 'seed');
+  git(base, 'init', '-b', 'main', seed);
+  writeFileSync(join(seed, 'ideas.json'), '{"version":1,"ideas":[]}\n');
+  git(seed, 'add', '.'); git(seed, 'commit', '-m', 'Start');
+  git(base, 'clone', '--bare', seed, join(base, 'remote.git'));
+  git(base, 'clone', join(base, 'remote.git'), join(base, 'runner'));
+  const options = { analyse: false, statePath: join(base, 'runner', 'ideas.json'), inboxDirectory: join(base, 'runner', 'inbox'), analyzer: { analyze: async () => { throw new Error('aus'); } }, lockPath: join(base, 'lock.json'), log: () => {} };
+  return { base, options, inbox: options.inboxDirectory };
+};
+
+test('the cleanup keeps this run\'s files, unknown digests, unreadable files and failed/', async () => {
+  const { options, inbox } = repositoryWithRunner('prune');
+  await dropDigest(inbox, 'a.json', digest);
+  const first = await syncOnce(options);
+  assert.deepEqual(first.cleanup.pruned, [], 'the file imported in this run stays visible in done/');
+  assert.ok(existsSync(join(inbox, 'done', 'a.json')));
+
+  // Was nicht (mehr) in ideas.json steht oder nicht lesbar ist, bleibt; failed/ bleibt ganz.
+  mkdirSync(join(inbox, 'failed'), { recursive: true });
+  writeFileSync(join(inbox, 'failed', 'bad.json'), '{nope');
+  writeFileSync(join(inbox, 'done', 'unknown.json'), JSON.stringify({ format: 'gedankenraum-inbox', version: 1, type: 'digest', title: 'Nie übernommen', text: 'x' }));
+  writeFileSync(join(inbox, 'done', 'broken.json'), '{nope');
+  await dropDigest(inbox, 'b.json', { ...digest, title: 'Zweiter Digest' });
+  const second = await syncOnce(options);
+  assert.deepEqual(second.cleanup.pruned, ['a.json']);
+  assert.deepEqual(second.cleanup.kept.map(({ file }) => file).sort(), ['broken.json', 'unknown.json']);
+  assert.deepEqual(readdirSync(join(inbox, 'done')).sort(), ['b.json', 'broken.json', 'unknown.json']);
+  assert.ok(existsSync(join(inbox, 'failed', 'bad.json')));
+});
+
+test('the cleanup waits while ideas.json is not pushed, and --done-behalten keeps everything', async () => {
+  const { base, options, inbox } = repositoryWithRunner('unpushed');
+  await dropDigest(inbox, 'a.json', digest);
+  await syncOnce(options);
+  // Eine lokale, ungepushte Änderung an ideas.json: Dann wird nichts gelöscht.
+  const state = JSON.parse(readFileSync(options.statePath, 'utf8'));
+  state.ideas[0].notes = 'lokal';
+  writeFileSync(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const blocked = await syncOnce(options);
+  assert.deepEqual(blocked.cleanup.pruned, []);
+  assert.match(blocked.cleanup.kept[0].reason, /nicht gepusht/);
+  git(join(base, 'runner'), 'commit', '-qam', 'lokal'); git(join(base, 'runner'), 'push', '-q');
+  assert.deepEqual((await syncOnce({ ...options, keepDone: true })).cleanup.pruned, []);
+  assert.deepEqual((await syncOnce(options)).cleanup.pruned, ['a.json']);
+});
+
+test('a deleted digest still makes its inbox file obsolete', async () => {
+  const { options, inbox } = repositoryWithRunner('trash');
+  await dropDigest(inbox, 'a.json', digest);
+  await syncOnce(options);
+  const state = JSON.parse(readFileSync(options.statePath, 'utf8'));
+  state.ideas[0].deletedAt = new Date().toISOString();
+  writeFileSync(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
+  git(dirname(options.statePath), 'commit', '-qam', 'gelöscht'); git(dirname(options.statePath), 'push', '-q');
+  assert.deepEqual((await syncOnce(options)).cleanup.pruned, ['a.json']);
 });
 
 test('without analysis the sync pushes pending digests, and the app analyses and pushes them after its next pull', async () => {
