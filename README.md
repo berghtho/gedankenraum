@@ -63,6 +63,19 @@ Alternativ:
 npm start
 ```
 
+### Autostart und Desktop-Verknüpfung
+
+```powershell
+npm run shortcuts
+```
+
+legt `Gedankenraum` auf dem Desktop und im Autostart-Ordner an. Ab der nächsten Anmeldung läuft der
+Server unsichtbar im Hintergrund; ohne geöffnete Seite braucht er praktisch keine Rechenzeit und etwa
+50 MB Arbeitsspeicher. Die Desktop-Verknüpfung öffnet die laufende Instanz im Browser oder startet sie,
+ebenfalls ohne Konsolenfenster. Die Verknüpfungen zeigen auf den aktuellen Ordner und die aktuelle
+Node.js-Installation; nach einem Umzug den Befehl erneut ausführen. `npm run shortcuts -- --remove`
+entfernt beide wieder.
+
 ## Textnotizen aufbewahren
 
 Texteingaben werden automatisch wortgetreu gespeichert, inklusive
