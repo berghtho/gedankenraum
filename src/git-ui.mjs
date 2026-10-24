@@ -28,7 +28,7 @@ export function initGitPush({ root, request, notify }) {
   // Was der Start aus dem Remote-Repository geholt hat, erscheint einmal beim Laden.
   const announceUpdate = (update) => {
     if (update?.error) notify(`Nicht aktualisiert: ${update.error}`, true);
-    else if (update?.pulled) notify(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
+    else if (update?.pulled) notify(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt${update.merged ? ' und mit den lokalen Änderungen zusammengeführt' : ''}.`);
   };
   gitPush.addEventListener('click', async () => {
     gitPush.disabled = true;

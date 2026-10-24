@@ -1,10 +1,15 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
+
+import { atomicReplaceText } from './atomic-file.mjs';
+import { mergeStates } from './state-merge.mjs';
 
 // Liegt ideas.json eingecheckt in einem Git-Repository, bietet Gedankenraum bei Änderungen „Push“ an.
 // Committet wird nur ideas.json; andere Dateien im Repository bleiben, wie sie sind.
 const COMMIT_MESSAGE = 'Gedankenraum: ideas.json aktualisiert';
+const MERGE_MESSAGE = 'Gedankenraum: ideas.json zusammengeführt';
+const OWN_SUBJECTS = new Set([COMMIT_MESSAGE, MERGE_MESSAGE]);
 
 function git(args, cwd, timeout = 15_000) {
   return new Promise((resolveRun, rejectRun) => {
@@ -34,16 +39,18 @@ export async function gitStatus(filePath) {
     const [, ahead = '0', behind = '0'] = /^\+(\d+) -(\d+)$/.exec(header('ab') ?? '') ?? [];
     // Ein Push nimmt alle ausgehenden Commits mit, auch solche, die nicht von Gedankenraum stammen.
     const subjects = Number(ahead) ? (await git(['log', '--format=%s', '@{u}..HEAD'], cwd)).split(/\r?\n/).filter(Boolean) : [];
-    const foreign = subjects.filter((subject) => subject !== COMMIT_MESSAGE).length;
+    const foreign = subjects.filter((subject) => !OWN_SUBJECTS.has(subject)).length;
     return { available: true, branch, upstream: header('upstream'), changed: lines.some((line) => /^[12u] /.test(line)), ahead: Number(ahead), behind: Number(behind), foreign };
   } catch (error) {
     return { available: false, reason: error.message };
   }
 }
 
-// Beim Start holt Gedankenraum neue Commits, aber nur per Fast-Forward: Es entsteht nie ein Merge,
-// der die JSON-Datei mit Konfliktmarkern beschädigen könnte. Offline startet die App ohne Update.
-export async function pullFastForward(filePath, fetchTimeout = 15_000) {
+// Holt neue Commits, beim Start und vor dem Digest-Eingang. Ohne eigene Änderungen per Fast-Forward.
+// Sonst wird eine geänderte ideas.json erst committet und dann zusammengeführt; ideas.json selbst wird dabei
+// nie per Textmerge, sondern Eintrag für Eintrag zusammengeführt (mergeStates), damit keine Konfliktmarker
+// die JSON-Datei beschädigen. Konflikte in anderen Dateien brechen den Merge ab. Offline bleibt alles, wie es ist.
+export async function pullRemote(filePath, fetchTimeout = 15_000) {
   const status = await gitStatus(filePath);
   if (!status.available || !status.upstream) return null;
   const { upstream } = status;
@@ -52,12 +59,44 @@ export async function pullFastForward(filePath, fetchTimeout = 15_000) {
     await git(['fetch', '--quiet'], cwd, fetchTimeout);
     const fetched = await gitStatus(filePath);
     if (!fetched.behind) return { upstream, pulled: 0 };
-    if (fetched.ahead) throw new Error(`Hier und in ${upstream} gibt es verschiedene neue Commits. Bitte im Repository zusammenführen.`);
-    await git(['merge', '--ff-only', '--quiet', '@{u}'], cwd);
-    return { upstream, pulled: fetched.behind };
+    if (!fetched.changed && !fetched.ahead) {
+      await git(['merge', '--ff-only', '--quiet', '@{u}'], cwd);
+      return { upstream, pulled: fetched.behind };
+    }
+    if (fetched.changed) {
+      if (!existsSync(filePath)) throw new Error(`${basename(filePath)} fehlt und wird nicht als gelöscht committet.`);
+      JSON.parse(readFileSync(filePath, 'utf8'));
+      await git(['commit', '--only', '-m', COMMIT_MESSAGE, '--', basename(filePath)], cwd);
+    }
+    await mergeUpstream(filePath);
+    return { upstream, pulled: fetched.behind, merged: true };
   } catch (error) {
     return { upstream, pulled: 0, error: error.message };
   }
+}
+
+async function mergeUpstream(filePath) {
+  const cwd = dirname(filePath);
+  const name = basename(filePath);
+  const read = async (revision) => JSON.parse(await git(['show', `${revision}:./${name}`], cwd));
+  const base = (await git(['merge-base', 'HEAD', '@{u}'], cwd)).trim();
+  // Erst lesen, dann mergen: Ist ein Stand kein gültiges JSON, bleibt das Repository unberührt.
+  const [ours, theirs] = await Promise.all([read('HEAD'), read('@{u}')]);
+  const merged = mergeStates(await read(base).catch(() => null), ours, theirs);
+  let failure = null;
+  try { await git(['merge', '--no-ff', '--no-commit', '--quiet', '@{u}'], cwd); } catch (error) { failure = error; }
+  if (!(await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], cwd).then(() => true, () => false))) {
+    throw failure ?? new Error('Zusammenführen ist fehlgeschlagen.');
+  }
+  const own = (await git(['ls-files', '--full-name', '--', name], cwd)).trim();
+  const conflicts = (await git(['diff', '--name-only', '--diff-filter=U'], cwd)).split(/\r?\n/).filter((path) => path && path !== own);
+  if (conflicts.length) {
+    await git(['merge', '--abort'], cwd);
+    throw new Error(`Konflikt in ${conflicts.join(', ')}. Bitte im Repository zusammenführen.`);
+  }
+  atomicReplaceText(filePath, `${JSON.stringify(merged, null, 2)}\n`);
+  await git(['add', '--', name], cwd);
+  await git(['commit', '--quiet', '-m', MERGE_MESSAGE], cwd);
 }
 
 export async function commitAndPush(filePath) {

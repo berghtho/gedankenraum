@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
+import { commitAndPush, gitStatus, pullRemote } from './git-sync.mjs';
 
 // Echtes Git, aber ohne die Git-Konfiguration dieses Rechners.
 const config = join(mkdtempSync(join(tmpdir(), 'gedankenraum-gitconfig-')), 'gitconfig');
@@ -92,54 +92,99 @@ test('a rejected push keeps the local commit and can be pushed again after a pul
   assert.equal(git(remote, 'show', 'main:notes.txt'), 'Von woanders\n');
 });
 
-test('launch pulls new commits by fast-forward only and leaves diverged history alone', async () => {
+const ideas = (...items) => `${JSON.stringify({ version: 1, ideas: items }, null, 2)}\n`;
+const ids = (file) => JSON.parse(readFileSync(file, 'utf8')).ideas.map((idea) => idea.id);
+
+test('pull fast-forwards without local changes and merges diverged history', async () => {
   const outside = mkdtempSync(join(tmpdir(), 'gedankenraum-nogit-'));
   writeFileSync(join(outside, 'ideas.json'), '{}\n');
-  assert.equal(await pullFastForward(join(outside, 'ideas.json')), null);
+  assert.equal(await pullRemote(join(outside, 'ideas.json')), null);
 
-  const { work, file, clone } = repository();
-  assert.deepEqual(await pullFastForward(file), { upstream: 'origin/main', pulled: 0 });
+  const { remote, work, file, clone } = repository();
+  assert.deepEqual(await pullRemote(file), { upstream: 'origin/main', pulled: 0 });
   const other = clone('other');
-  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  writeFileSync(join(other, 'ideas.json'), ideas({ id: 'remote' }));
   git(other, 'commit', '-am', 'Anderswo');
   git(other, 'push');
-  assert.deepEqual(await pullFastForward(file), { upstream: 'origin/main', pulled: 1 });
-  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  assert.deepEqual(await pullRemote(file), { upstream: 'origin/main', pulled: 1 });
+  assert.deepEqual(ids(file), ['remote']);
 
-  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote2"}]}\n');
+  writeFileSync(join(other, 'ideas.json'), ideas({ id: 'remote2' }, { id: 'remote' }));
+  writeFileSync(join(other, 'notes.txt'), 'Von woanders\n');
   git(other, 'commit', '-am', 'Noch einmal anderswo');
   git(other, 'push');
-  writeFileSync(join(work, 'notes.txt'), 'Hier\n');
-  git(work, 'commit', '-am', 'Hier');
-  const head = git(work, 'rev-parse', 'HEAD');
-  const diverged = await pullFastForward(file);
-  assert.equal(diverged.pulled, 0);
-  assert.match(diverged.error, /verschiedene neue Commits/);
-  assert.equal(git(work, 'rev-parse', 'HEAD'), head);
-  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  writeFileSync(join(work, 'other.txt'), 'Hier\n');
+  git(work, 'add', 'other.txt');
+  git(work, 'commit', '-m', 'Hier');
+  assert.deepEqual(await pullRemote(file), { upstream: 'origin/main', pulled: 1, merged: true });
+  assert.deepEqual(ids(file), ['remote2', 'remote']);
+  assert.equal(readFileSync(join(work, 'notes.txt'), 'utf8'), 'Von woanders\n');
+  assert.equal(git(work, 'log', '-1', '--format=%s').trim(), 'Gedankenraum: ideas.json zusammengeführt');
+  // Der fremde Commit „Hier“ geht mit, der Merge-Commit stammt von Gedankenraum.
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 2, behind: 0, foreign: 1 });
+  await commitAndPush(file);
+  assert.deepEqual(JSON.parse(git(remote, 'show', 'main:ideas.json')).ideas.map((idea) => idea.id), ['remote2', 'remote']);
 });
 
-test('launch pull never overwrites an unpushed ideas.json and survives an unreachable remote', async () => {
+test('pull keeps an unpushed ideas.json by committing and merging it entry by entry', async () => {
   const { work, file, clone } = repository();
   const other = clone('other');
-  writeFileSync(join(other, 'ideas.json'), '{"version":1,"ideas":[{"id":"remote"}]}\n');
+  writeFileSync(file, ideas({ id: 'a', summary: '', updatedAt: '1' }));
+  await commitAndPush(file);
+  git(other, 'pull');
+
+  // Remote kommt ein neuer Digest dazu, lokal wird derselbe Bereich der Datei analysiert.
+  writeFileSync(join(other, 'ideas.json'), ideas({ id: 'neu', summary: '', updatedAt: '2' }, { id: 'a', summary: '', updatedAt: '1' }));
+  git(other, 'commit', '-am', 'Digest');
+  git(other, 'push');
+  writeFileSync(file, ideas({ id: 'a', summary: 'Analysiert', updatedAt: '3' }));
+
+  assert.deepEqual(await pullRemote(file), { upstream: 'origin/main', pulled: 1, merged: true });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).ideas, [
+    { id: 'neu', summary: '', updatedAt: '2' },
+    { id: 'a', summary: 'Analysiert', updatedAt: '3' },
+  ]);
+  assert.deepEqual(git(work, 'log', '-2', '--format=%s').trim().split(/\r?\n/), ['Gedankenraum: ideas.json zusammengeführt', 'Gedankenraum: ideas.json aktualisiert']);
+  assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 2, behind: 0, foreign: 0 });
+});
+
+test('pull aborts when another file conflicts and leaves an unreadable ideas.json alone', async () => {
+  const { work, file, clone } = repository();
+  const other = clone('other');
+  writeFileSync(join(other, 'notes.txt'), 'Remote\n');
+  writeFileSync(join(other, 'ideas.json'), ideas({ id: 'remote' }));
   git(other, 'commit', '-am', 'Anderswo');
   git(other, 'push');
-  writeFileSync(file, '{"version":1,"ideas":[{"id":"lokal"}]}\n');
-  const blocked = await pullFastForward(file);
-  assert.equal(blocked.pulled, 0);
-  assert.match(blocked.error, /ideas\.json/);
-  assert.equal(readFileSync(file, 'utf8'), '{"version":1,"ideas":[{"id":"lokal"}]}\n');
+  writeFileSync(join(work, 'notes.txt'), 'Lokal\n');
+  git(work, 'commit', '-am', 'Hier');
+  const head = git(work, 'rev-parse', 'HEAD');
+  const conflict = await pullRemote(file);
+  assert.equal(conflict.pulled, 0);
+  assert.match(conflict.error, /Konflikt in notes\.txt/);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(work, 'status', '--porcelain').trim(), '');
 
+  git(work, 'reset', '--hard', 'origin/main~1');
+  const before = git(work, 'rev-parse', 'HEAD');
+  writeFileSync(file, '{ kaputt');
+  const broken = await pullRemote(file);
+  assert.equal(broken.pulled, 0);
+  assert.ok(broken.error);
+  assert.equal(git(work, 'rev-parse', 'HEAD'), before);
+  assert.equal(readFileSync(file, 'utf8'), '{ kaputt');
+});
+
+test('pull survives an unreachable remote', async () => {
+  const { work, file } = repository();
   git(work, 'remote', 'set-url', 'origin', join(work, '..', 'fehlt.git'));
-  const offline = await pullFastForward(file);
+  const offline = await pullRemote(file);
   assert.equal(offline.pulled, 0);
   assert.ok(offline.error);
 });
 
 test('the launch fetch gives up after the given timeout', async () => {
   const { file } = repository();
-  const slow = await pullFastForward(file, 1);
+  const slow = await pullRemote(file, 1);
   assert.equal(slow.pulled, 0);
   assert.match(slow.error, /nicht rechtzeitig/);
 });
