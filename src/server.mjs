@@ -9,7 +9,7 @@ import { execFile, spawn } from 'node:child_process';
 
 import { atomicReplaceText } from './atomic-file.mjs';
 import { createCodexAnalyzer } from './codex-analysis.mjs';
-import { commitAndPush, gitStatus, pullFastForward } from './git-sync.mjs';
+import { commitAndPush, gitStatus, pullRemote } from './git-sync.mjs';
 import { IdeaBoard, IdeaBoardValidationError, samePath } from './idea-board.mjs';
 import { createInbox, defaultInboxDirectory } from './inbox.mjs';
 import { createIdeaLinkReader } from './idea-link-reader.mjs';
@@ -188,7 +188,7 @@ export function createGitInbox({ board, directory, push = () => commitAndPush(bo
   return createInbox({
     board,
     directory,
-    pull: (path) => pullFastForward(path, 15_000),
+    pull: (path) => pullRemote(path, 15_000),
     push: async (path) => {
       const status = await gitStatus(path);
       if (!status.available) return { skipped: status.reason };
@@ -393,9 +393,9 @@ export async function start({ open = false, preferredPort = Number(process.env.G
   }
   // Vor dem ersten Lesen und Schreiben, damit keine Analyse in das Update hineinschreibt.
   // Offline soll der Start nur kurz warten.
-  const update = await pullFastForward(statePath, 5_000);
+  const update = await pullRemote(statePath, 5_000);
   if (update?.error) console.log(`Nicht aktualisiert: ${update.error}`);
-  else if (update?.pulled) console.log(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt.`);
+  else if (update?.pulled) console.log(`Aktualisiert: ${update.pulled} Commit${update.pulled === 1 ? '' : 's'} aus ${update.upstream} geholt${update.merged ? ' und mit den lokalen Änderungen zusammengeführt' : ''}.`);
   const app = createGedankenraumServer({ statePath, update, inboxDirectory: defaultInboxDirectory() });
   app.server.once('close', instance.release);
   try {

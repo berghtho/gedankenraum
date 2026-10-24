@@ -7,7 +7,7 @@ import { atomicReplaceText } from './atomic-file.mjs';
 
 // Digest-Eingang: Andere Programme (etwa ein geplanter Agent) legen Digests als JSON-Dateien in einen Ordner.
 // Gedankenraum übernimmt sie beim Start und, solange es läuft, sobald sie erscheinen:
-// erst holen (Fast-Forward), dann übernehmen, nach der Analyse ideas.json pushen.
+// erst holen (pullRemote), dann übernehmen, nach der Analyse ideas.json pushen.
 // Verarbeitete Dateien wandern nach done/, ungültige nach failed/. Gelöscht wird nur über pruneDone().
 // Scheitert der Push, merkt sich der Eingang das in .push-pending und versucht es beim nächsten Lauf erneut,
 // auch wenn keine neue Datei kommt.

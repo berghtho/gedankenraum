@@ -126,7 +126,7 @@ von Git ausgenommen):
 ```
 
 Läuft Gedankenraum, übernimmt es neue Dateien nach wenigen Sekunden, sonst beim nächsten Start. Ablauf:
-zuerst `ideas.json` per Fast-Forward holen, dann jede Datei als Digest speichern, nach der Analyse (höchstens
+zuerst neue Commits holen (siehe „Daten“), dann jede Datei als Digest speichern, nach der Analyse (höchstens
 15 Minuten Wartezeit) `ideas.json` committen und pushen, wie mit `PUSH` im Menü. Würden dabei fremde Commits
 mitgehen, wird nicht automatisch gepusht; dann bleibt `PUSH` im Menü. Übernommene Dateien wandern nach
 `done\`, ungültige nach `failed\`. Die App selbst löscht nichts. Ein Digest mit gleichem Titel und Text wird nicht
@@ -153,8 +153,8 @@ So nimmt GitHub Actions Digests an, ohne dass der eigene Rechner läuft und ohne
 Eingang ist dort der Ordner `inbox/`. Der Workflow läuft bei jedem Push nach `inbox/`, täglich um 5:30 UTC
 und von Hand, übernimmt die Digests ohne Analyse und pusht. Beim nächsten Start holt Gedankenraum sie,
 analysiert sie mit dem lokalen Codex und pusht danach selbst. Wie ein geplanter Job Digests ablegt, steht in
-`docs/digest-scheduler.md`. Die lokale App sollte ihre Änderungen pushen, sonst kann sie beim Start nicht
-per Fast-Forward aktualisieren.
+`docs/digest-scheduler.md`. Ungepushte lokale Änderungen führt die App beim Holen mit den neuen Digests
+zusammen.
 
 ## Daten
 
@@ -175,12 +175,16 @@ sie geändert wurde oder Commits noch nicht gepusht sind. Ein Klick committet nu
 gepushten Commits des Branches mit; wie viele davon nicht von Gedankenraum stammen, steht als „fremde“
 Commits am Menüpunkt. Die Anmeldung übernimmt der in Git
 eingerichtete Credential Helper. Hat das Remote-Repository neuere Änderungen, führt Gedankenraum nichts
-zusammen: Der Commit bleibt lokal, und nach einem `git pull` im Repository lässt sich erneut pushen.
+zusammen: Der Commit bleibt lokal und wird beim nächsten Holen zusammengeführt.
 
-Beim Start holt Gedankenraum neue Commits aus dem Remote-Repository, bevor die Sammlung geladen wird, aber
-nur per Fast-Forward. Gibt es hier und im Remote-Repository verschiedene neue Commits oder würde eine noch
-nicht gepushte `ideas.json` überschrieben, bleibt alles unverändert und ein Hinweis erscheint. Ist das
-Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 5 Sekunden ohne Update.
+Beim Start, bevor die Sammlung geladen wird, und vor dem Digest-Eingang holt Gedankenraum neue Commits aus dem
+Remote-Repository. Ohne lokale Änderungen per Fast-Forward. Ist die `ideas.json` geändert oder gibt es hier
+eigene Commits, wird die `ideas.json` zuerst committet und dann zusammengeführt („Gedankenraum: ideas.json
+zusammengeführt“). Die `ideas.json` wird dabei nie als Text gemergt, sondern Gedanke für Gedanke und Feld für
+Feld: Was nur eine Seite geändert hat, gilt, neue Gedanken beider Seiten bleiben. Hat sich dasselbe Feld auf
+beiden Seiten geändert, gilt der Gedanke mit dem neueren `updatedAt`. Konflikte in anderen Dateien brechen den
+Merge ab; dann bleibt alles unverändert und ein Hinweis erscheint. Nach einem Merge steht `PUSH` im Menü. Ist
+das Remote-Repository nicht erreichbar, startet Gedankenraum nach höchstens 5 Sekunden ohne Update.
 
 Über `IMPORT` kann eine bestehende `ideas.json` ausgewählt werden. Ihre Gedanken werden mit der
 aktuellen Sammlung zusammengeführt; bereits vorhandene IDs werden übersprungen.
