@@ -83,12 +83,13 @@ async function mergeUpstream(filePath) {
   // Erst lesen, dann mergen: Ist ein Stand kein gültiges JSON, bleibt das Repository unberührt.
   const [ours, theirs] = await Promise.all([read('HEAD'), read('@{u}')]);
   const merged = mergeStates(await read(base).catch(() => null), ours, theirs);
+  // Vor dem Merge abfragen: Bei einem Textkonflikt führt ls-files die Datei einmal pro Stage auf.
+  const own = (await git(['ls-files', '--full-name', '--', name], cwd)).trim();
   let failure = null;
   try { await git(['merge', '--no-ff', '--no-commit', '--quiet', '@{u}'], cwd); } catch (error) { failure = error; }
   if (!(await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], cwd).then(() => true, () => false))) {
     throw failure ?? new Error('Zusammenführen ist fehlgeschlagen.');
   }
-  const own = (await git(['ls-files', '--full-name', '--', name], cwd)).trim();
   const conflicts = (await git(['diff', '--name-only', '--diff-filter=U'], cwd)).split(/\r?\n/).filter((path) => path && path !== own);
   if (conflicts.length) {
     await git(['merge', '--abort'], cwd);
