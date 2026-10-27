@@ -148,6 +148,22 @@ test('pull keeps an unpushed ideas.json by committing and merging it entry by en
   assert.deepEqual(await gitStatus(file), { available: true, branch: 'main', upstream: 'origin/main', changed: false, ahead: 2, behind: 0, foreign: 0 });
 });
 
+test('pull merges ideas.json even when both sides changed the same lines', async () => {
+  const { file, clone } = repository();
+  const other = clone('other');
+  writeFileSync(file, ideas({ id: 'a', summary: '', updatedAt: '1' }));
+  await commitAndPush(file);
+  git(other, 'pull');
+
+  writeFileSync(join(other, 'ideas.json'), ideas({ id: 'a', summary: 'Remote', updatedAt: '2' }));
+  git(other, 'commit', '-am', 'Digest');
+  git(other, 'push');
+  writeFileSync(file, ideas({ id: 'a', summary: 'Lokal', updatedAt: '3' }));
+
+  assert.deepEqual(await pullRemote(file), { upstream: 'origin/main', pulled: 1, merged: true });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).ideas, [{ id: 'a', summary: 'Lokal', updatedAt: '3' }]);
+});
+
 test('pull aborts when another file conflicts and leaves an unreadable ideas.json alone', async () => {
   const { work, file, clone } = repository();
   const other = clone('other');
